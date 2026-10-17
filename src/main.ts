@@ -1,6 +1,7 @@
 import { Notice, Plugin } from 'obsidian';
 
 import { AdaptadorDeArchivos, PuenteDeEventos, type CambioDeVault } from './ObsidianFileAdapter';
+import { comandoExportar, comandoImportar, procesarPedidosDeE2E } from './ExportImport';
 import { AjustesDeOvaultd, AJUSTES_POR_DEFECTO, TabAjustes } from './SettingsTab';
 import { RegistroDeSpike } from './spikeEventos';
 import { MotorDeSync, type EstadoDelMotor } from './sync-engine';
@@ -77,6 +78,22 @@ export default class PluginOvaultd extends Plugin {
     });
 
     this.addCommand({
+      id: 'exportar-vault',
+      name: 'Exportar el vault remoto a una carpeta…',
+      callback: () => {
+        comandoExportar(this);
+      },
+    });
+
+    this.addCommand({
+      id: 'importar-carpeta',
+      name: 'Importar una carpeta al vault…',
+      callback: () => {
+        comandoImportar(this);
+      },
+    });
+
+    this.addCommand({
       id: 'motor-estado',
       name: 'Estado del motor',
       callback: () => {
@@ -123,6 +140,11 @@ export default class PluginOvaultd extends Plugin {
     // Motor: si hay estado local (vault ya vinculado), arranca solo.
     void this.motor.iniciar().catch((error) => {
       console.error('ovaultd: no pude iniciar el motor', error);
+    });
+
+    // Pedidos de export/import dejados junto al plugin (disparo sin UI para el E2E).
+    void procesarPedidosDeE2E(this).catch((error) => {
+      console.error('ovaultd: los pedidos de E2E fallaron', error);
     });
 
     if (this.ajustes.serverUrl !== '') {

@@ -137,6 +137,36 @@ export class MotorDeSync {
     return `«${this.estadoLocal.vault.nombre}» en ${this.estadoLocal.serverUrl} (cuenta ${this.estadoLocal.cuenta.email})`;
   }
 
+  get nombreDeVault(): string {
+    return this.estadoLocal?.vault.nombre ?? 'vault';
+  }
+
+  /** Las claves derivadas del vault vinculado (el export las necesita). */
+  get claves(): SubKeys | null {
+    if (this.keys !== null) return this.keys;
+    const local = this.estadoLocal;
+    return local === null ? null : subclavesDeHex(local.vault.subclaves);
+  }
+
+  /**
+   * Una conexión NUEVA (abierta desde cero) para operaciones de lectura pesadas como el
+   * export: no comparte el lock ni la conexión del ciclo de sync.
+   */
+  async conexionParaExport(): Promise<SyncConnection | null> {
+    const local = this.estadoLocal ?? (await this.leerEstadoLocal());
+    if (local === null) return null;
+
+    const conn = new SyncConnection({
+      baseUrl: local.serverUrl,
+      token: local.cuenta.token,
+      vault: local.vault.numero,
+      device: local.cuenta.deviceId,
+      keys: subclavesDeHex(local.vault.subclaves),
+    });
+    await conn.open({ since: 0 });
+    return conn;
+  }
+
   // ------------------------------------------------------------------ vinculación
 
   private async pedirJson<T>(
