@@ -1,5 +1,6 @@
 import { App, PluginSettingTab, Setting } from 'obsidian';
 
+import { comandoExportar, comandoImportar } from './ExportImport';
 import type PluginOvaultd from './main';
 
 export interface AjustesDeOvaultd {
@@ -63,6 +64,32 @@ export class TabAjustes extends PluginSettingTab {
         boton.setButtonText('Sincronizar').onClick(async () => {
           await this.plugin.sincronizarAhora();
           this.display();
+        }),
+      );
+
+    containerEl.createEl('h3', { text: 'Export / Import' });
+
+    new Setting(containerEl)
+      .setName('Exportar el vault a una carpeta')
+      .setDesc(
+        'Baja TODO el vault remoto y lo escribe descifrado en la carpeta que elijas ' +
+          '(los que ya existan se omiten). Solo app de escritorio.',
+      )
+      .addButton((boton) =>
+        boton.setButtonText('Exportar…').onClick(() => {
+          comandoExportar(this.plugin);
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName('Importar una carpeta al vault')
+      .setDesc(
+        'Copia los archivos de una carpeta al vault (dotfiles y basura de dev quedan afuera; ' +
+          'lo existente no se pisa). Después el motor los sube solo.',
+      )
+      .addButton((boton) =>
+        boton.setButtonText('Importar…').onClick(() => {
+          comandoImportar(this.plugin);
         }),
       );
 
