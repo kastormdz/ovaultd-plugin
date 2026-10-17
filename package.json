@@ -1,0 +1,17 @@
+{
+  "name": "@ovaultd/plugin",
+  "version": "0.1.0",
+  "description": "Obsidian plugin for ovaultd — self-hosted, end-to-end encrypted sync.",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc -noEmit && node esbuild.config.mjs production",
+    "install:dev": "node scripts/install-dev.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "obsidian": "1.14.4",
+    "typescript": "7.0.2"
+  }
+}

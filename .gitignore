@@ -1,6 +1,9 @@
 # build outputs (los releases los llevan; el repo no)
 node_modules/
 main.js
+*.js.map
 
 # ruido
 .DS_Store
+.hotreload
+.tmp/

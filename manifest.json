@@ -1,0 +1,10 @@
+{
+  "id": "ovaultd",
+  "name": "Self-hosted Sync",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Sync your vault through your own ovaultd server: end-to-end encrypted, revision-based, no third parties.",
+  "author": "kastormdz",
+  "authorUrl": "https://github.com/kastormdz",
+  "isDesktopOnly": true
+}
