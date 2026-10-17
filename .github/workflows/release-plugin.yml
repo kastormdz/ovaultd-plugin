@@ -19,10 +19,12 @@ jobs:
       # El plugin importa `@ovaultd/core|crypto|protocol` por `file:../ovaultd/packages/*`:
       # sin el monorepo al lado, `npm ci` no resuelve nada. Se clona y se construye primero
       # (el plugin consume los `dist/`, no las fuentes).
-      - uses: actions/checkout@v4
-        with:
-          repository: kastormdz/ovaultd
-          path: ../ovaultd
+      #
+      # OJO: `actions/checkout` con `path: ../ovaultd` NO se puede (el path tiene que estar
+      # dentro del workspace): se clona a mano al hermano del workspace, que es donde el
+      # `file:../ovaultd/...` del package.json lo espera.
+      - name: Clonar el monorepo al lado
+        run: git clone --depth 1 "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/kastormdz/ovaultd.git" ../ovaultd
 
       - uses: actions/setup-node@v4
         with:
