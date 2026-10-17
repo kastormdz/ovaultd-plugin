@@ -2,51 +2,67 @@
 
 The Obsidian plugin for **ovaultd** — self-hosted, end-to-end encrypted sync for your vault: [github.com/kastormdz/ovaultd](https://github.com/kastormdz/ovaultd).
 
-**Status: phase 3 in progress** — the plugin shell, the vault adapter (the `FileSystemPort` of the core over Obsidian's `DataAdapter`), the event bridge with 250 ms coalescing + hash-based self-change filtering, and **the sync engine wired in**: the core (`@ovaultd/core`: state store, reconciliation, push/pull, explicit conflicts) runs inside the renderer with IndexedDB as durable state. Next cuts: two real vaults with a live conflict (3c), end-to-end tests (phase 4), conflict resolution + history + restore (phase 5).
+Everything runs inside Obsidian. The plugin embeds the same durable core as the CLI (versioned IndexedDB state, save-first outbox, apply journal), so your vault stays in sync with your own server — and the server never sees your notes: content and paths are encrypted on your device with keys derived from your vault password, which never leaves it.
 
-Why a separate repository: the community directory requires the plugin manifest and release assets at the root of the submitted repository, one release per version. The server, the shared client libraries (`@ovaultd/protocol`, `@ovaultd/crypto`, `@ovaultd/core`) and the CLI live in the main repository.
+The server, the shared libraries (`@ovaultd/protocol`, `@ovaultd/crypto`, `@ovaultd/core`) and the CLI live in the main repository. This repository holds the plugin alone — the community directory requires the manifest and the release assets at the root of the submitted repository.
+
+## What it does
+
+- **Event-driven sync.** Vault changes are coalesced, then a debounced `pull → push` cycle runs under a lock. No timers, no polling: a change is what wakes it up. The status bar shows its state (`al día`, `sincronizando…`, `⚠ conflictos`, `error`).
+- **Explicit conflicts, never silent overwrites.** When the same file changed on two devices, the plugin reports the conflict and asks: keep your local version or take the remote one. Neither side is discarded without your say-so.
+- **Vault management from the settings tab.** Create a vault, link an existing one, unlink the folder, delete a vault (typing its name to confirm), recover access with the recovery key when the vault password is lost, and change the vault password.
+- **Export / import.** Write the remote vault to a local folder, or import a folder into the vault. The portable validation runs before anything is written.
+- **Mobile-grade by construction.** The bundle keeps `obsidian`/`electron` external and **fails the build** if any Node builtin (`fs`, `path`, `child_process`, …) leaks in — the same `main.js` must run on mobile, where Node does not exist. Crypto, state and sync are plain browser JavaScript.
+- **Durable, bounded local state.** The engine's state lives in IndexedDB; the plugin folder keeps a small `estado-local.json` (account token, vault id/epoch, derived subkeys), `sesion-cuenta.json` (your account session, survives unlinking) and a bounded `motor.log`. Passwords are never written to disk.
+
+## How sync works, in one paragraph
+
+Your vault password is stretched into a KEK, which unwraps the vault key; from those, per-content keys and signing keys are derived. Changed files are encrypted and uploaded as opaque blobs; the server stores them with signed revision records chained by `expected_rev`. Pulling is a delta since your last known revision; pushing signs every operation. If someone else edited ahead of you, you get a conflict instead of a lost edit.
 
 ## Requirements
 
-- Node 22+.
-- The main repository checked out as a sibling directory (`../ovaultd`), until `@ovaultd/*` is published.
+- An **ovaultd server** ([main repository](https://github.com/kastormdz/ovaultd)) — a single container, published on loopback, behind your own reverse proxy.
+- An **account** on it: the first one is created in the browser at `/setup`; further accounts come from the admin panel or the `ovaultd-admin` CLI.
+- For building from source: Node 22+, and the main repository checked out as a sibling directory (`../ovaultd`) while `@ovaultd/*` is not published to npm.
+
+## Install
+
+Build it and install into a vault:
+
+```bash
+npm install
+npm run build
+npm run install:dev -- --vault "$HOME/path/to/your/vault"
+```
+
+Then enable it in Obsidian: Settings → Community plugins → **oVaultd Plugin**. (The same three files — `main.js`, `manifest.json`, `styles.css` — can be copied by hand into `<vault>/.obsidian/plugins/ovaultd/`.)
+
+## Usage
+
+Settings → **oVaultd Plugin**:
+
+1. **Cuenta** — server URL, account email and account password. This is asked **once**: the session is reused from then on.
+2. **Tus vaults** — every vault on the account, with the actions for each one: link, recover access (with the recovery key), or delete. A new vault is created with **Crear vault nuevo…** (name + a vault password *you invent*; the recovery key is shown exactly once — store it somewhere safe).
+3. **Esta carpeta** — the linked vault: sync status, **Sincronizar ahora**, **Cambiar password…** and **Desvincular**.
+
+Two different secrets, easy to confuse: the **account** password (which the server knows how to verify) and the **vault** password (which the server never sees — it opens your notes). Losing the vault password is not fatal: the recovery key is the second lock.
+
+Commands in the palette (Ctrl+P): *Probar conexión*, *Sincronizar ahora*, *Estado del motor*, *Exportar el vault a una carpeta…*, *Importar una carpeta al vault…*, *Resolver conflicto…*.
 
 ## Development
 
 ```bash
 npm install
 npm run dev            # esbuild in watch mode → main.js
-npm run build          # typecheck (tsc -noEmit) + production build
+npm run build          # typecheck (tsc -noEmit) + production build (with the anti-Node gate)
 ```
 
-Install the build into a real Obsidian vault:
-
-```bash
-npm run install:dev -- --vault "$HOME/tmp/ovaultd-device-a"
-```
-
-The bundle keeps `obsidian`/`electron` external and **fails the build** if any Node builtin (`fs`, `path`, `child_process`, …) leaks into the bundle: the same `main.js` must run on mobile, where Node does not exist. The whole engine (crypto, state, sync) is browser-grade JavaScript — no Node APIs, no Node polyfills.
-
-## Usage
-
-Settings → **oVaultd Plugin**:
-
-| Field | What it is |
-|---|---|
-| **Server** | Base URL of your ovaultd server (e.g. `https://sync.example.com`). Persisted in the plugin data. |
-| **Account email** | Your account on the server (created by the admin via `ovaultd-admin create-account`, or the first one through the web bootstrap `/setup`). Persisted. |
-| **Account password** | Used once for the device sign-in. Lives only in the form — never written to disk. |
-| **Vault number** | The `#` of the remote vault (start with `1`). Persisted. |
-| **Vault password** | Derives the KEK and unwraps the vault key locally (KEK → unwrap → subkeys). The server never sees it; it lives only in the form. |
-
-Press **Vincular** (link): sign-in → vault material → local key derivation → the engine starts and does its first cycle. From then on it is event-driven: coalesced vault changes trigger a `pull → push` cycle with a global 1.5 s debounce and a lock. The status bar shows the phase (`al día`, `sincronizando…`, `⚠ conflictos`, `error`).
-
-What is persisted where: account token, vault uuid/epoch and the derived **subkeys** go to `.obsidian/plugins/ovaultd/estado-local.json` (outside `data.json`, deliberately: `data.json` is a candidate for the future white-listed config sync). `motor.log` next to it keeps a bounded phase log. Neither file is visible to the vault watcher (dotfiles emit no events — measured in the spike).
-
-Commands: *Probar conexión* (raw `fetch` against `/healthz` — the exact CORS path the engine uses), *Sincronizar ahora* (full cycle on demand), *Estado del motor*, plus the event-spike recorder used during development (`docs/spike-eventos.md`).
+Sync is the risky part, so the loop for changes that touch it: build, copy to a real vault, and watch `motor.log` and the status bar — the engine is designed to be observed. The repository ships `docs/spike-eventos.md`, a measured report on how Obsidian's watcher actually behaves (external renames arrive as create+delete, dotfiles emit no events, content is stable by the time the event lands) — those measurements are what the engine is built on.
 
 ## Leak gate
 
 Before every push: `scripts/scan-leaks.sh` (plus `.githooks/pre-commit`, activated with `git config core.hooksPath .githooks`). Personal patterns go in `scripts/leaks.local` (never versioned).
 
-License: MIT — see `LICENSE`.
+## License
+
+MIT — see `LICENSE`.
