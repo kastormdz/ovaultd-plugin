@@ -1,6 +1,7 @@
 import { App, PluginSettingTab, Setting } from 'obsidian';
 
 import { comandoExportar, comandoImportar } from './ExportImport';
+import { comandoCrearVault } from './CrearVault';
 import type PluginOvaultd from './main';
 
 export interface AjustesDeOvaultd {
@@ -92,6 +93,21 @@ export class TabAjustes extends PluginSettingTab {
           comandoImportar(this.plugin);
         }),
       );
+
+    if (!vinculado) {
+      containerEl.createEl('h3', { text: 'Vault' });
+      new Setting(containerEl)
+        .setName('Crear un vault nuevo')
+        .setDesc(
+          'Alta completa desde acá: elegís nombre y password de cifrado, el material se genera ' +
+            'en este equipo y el servidor nunca ve tu password. Después esta carpeta se sube sola.',
+        )
+        .addButton((boton) =>
+          boton.setButtonText('Crear vault…').onClick(() => {
+            void comandoCrearVault(this.plugin);
+          }),
+        );
+    }
 
     containerEl.createEl('h3', { text: 'Servidor y cuenta' });
 

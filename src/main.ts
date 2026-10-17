@@ -3,6 +3,7 @@ import { Notice, Plugin } from 'obsidian';
 import { AdaptadorDeArchivos, PuenteDeEventos, type CambioDeVault } from './ObsidianFileAdapter';
 import { comandoExportar, comandoImportar, procesarPedidosDeE2E } from './ExportImport';
 import { comandoResolver, procesarPedidoDeResolucion } from './Resolver';
+import { comandoCrearVault } from './CrearVault';
 import { AjustesDeOvaultd, AJUSTES_POR_DEFECTO, TabAjustes } from './SettingsTab';
 import { RegistroDeSpike } from './spikeEventos';
 import { MotorDeSync, type EstadoDelMotor } from './sync-engine';
@@ -99,6 +100,14 @@ export default class PluginOvaultd extends Plugin {
       name: 'Resolver conflicto de sincronización…',
       callback: () => {
         void comandoResolver(this);
+      },
+    });
+
+    this.addCommand({
+      id: 'crear-vault',
+      name: 'Crear un vault nuevo…',
+      callback: () => {
+        void comandoCrearVault(this);
       },
     });
 

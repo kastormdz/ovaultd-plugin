@@ -30,8 +30,31 @@ import {
   type IntentEntry,
   type SyncCycleReport,
 } from '@ovaultd/core';
-import { deriveKek, deriveSubkeys, unwrapKeyPw, type KdfParams, type SubKeys } from '@ovaultd/crypto';
-import { b64Decode, fromHex, toHex, type VaultMaterial, type VaultSummary } from '@ovaultd/protocol';
+import {
+  KDF_DEFAULTS,
+  deriveKek,
+  deriveKekRecovery,
+  deriveSubkeys,
+  identityFromSubkeys,
+  randomRecoverySecret,
+  randomSalt,
+  randomVaultKey,
+  randomVaultUuid,
+  unwrapKeyPw,
+  wrapKeyPw,
+  wrapKeyRc,
+  type KdfParams,
+  type SubKeys,
+} from '@ovaultd/crypto';
+import {
+  b64Decode,
+  b64Encode,
+  fromHex,
+  toHex,
+  type CreateVaultWire,
+  type VaultMaterial,
+  type VaultSummary,
+} from '@ovaultd/protocol';
 
 import { AdaptadorDeArchivos } from './ObsidianFileAdapter';
 
@@ -183,15 +206,24 @@ export class MotorDeSync {
    * pull retoma desde el checkpoint y todo lo que estaba encolado fluye.
    */
   async resolver(intentId: string, eleccion: EleccionDeResolucion): Promise<void> {
-    const { store, port, keys, conn } = this;
-    if (store === null || port === null || keys === null || conn === null) {
+    const { store, port, keys } = this;
+    if (store === null || port === null || keys === null) {
       throw new Error('el motor no está iniciado (¿vinculaste el vault?)');
     }
 
     const intent = await store.getIntent(intentId);
     if (intent === null) throw new Error('ese conflicto ya no existe');
 
-    await resolverBloqueado({ store, port, keys }, intent, eleccion, conn);
+    // Con el ciclo en marcha se usa su conexión; si todavía no abrió (recién arrancado,
+    // como en el pedido E2E) se abre una al vuelo — el resolver solo baja el blob.
+    const conn = this.conn ?? (await this.conexionParaExport());
+    if (conn === null) throw new Error('no hay sesión guardada (¿vinculaste el vault?)');
+
+    try {
+      await resolverBloqueado({ store, port, keys }, intent, eleccion, conn);
+    } finally {
+      if (conn !== this.conn) conn.close();
+    }
     this.marcarSucio(250);
   }
 
@@ -288,6 +320,86 @@ export class MotorDeSync {
 
     await this.iniciar();
     return `vinculado: ${this.resumenVinculo}`;
+  }
+
+  /**
+   * Crea un vault NUEVO desde el plugin: el material se genera ACÁ (el servidor no ve la
+   * password), se registra en el server y el motor queda vinculado a esta carpeta. La
+   * recovery key se devuelve UNA vez — quien la reciba no la puede volver a pedir.
+   */
+  async crearVault(opciones: {
+    serverUrl: string;
+    email: string;
+    passwordCuenta: string;
+    nombre: string;
+    passwordVault: string;
+  }): Promise<{ id: number; recoveryHex: string }> {
+    const base = normalizarServer(opciones.serverUrl);
+    this.fijarEstado('sincronizando', 'creando vault…');
+
+    // 1) Sesión (device nuevo; revocable desde /devices).
+    const sesion = await this.pedirJson<{ token: string; device_id: number }>(
+      `${base}/api/v1/auth/signin`,
+      {
+        metodo: 'POST',
+        cuerpo: {
+          email: opciones.email,
+          password: opciones.passwordCuenta,
+          name: 'obsidian',
+          platform: 'obsidian',
+        },
+      },
+    );
+
+    // 2) Material nuevo (idéntico a `create-remote` del CLI).
+    const vaultUuid = randomVaultUuid();
+    const vaultKey = randomVaultKey();
+    const salt = randomSalt();
+    const recoverySecret = randomRecoverySecret();
+
+    const kek = deriveKek(opciones.passwordVault, salt);
+    const wrappedPw = wrapKeyPw(vaultKey, kek, vaultUuid, salt);
+    const kekRecovery = deriveKekRecovery(recoverySecret, salt);
+    const wrappedRc = wrapKeyRc(vaultKey, kekRecovery, vaultUuid);
+    const identidad = identityFromSubkeys(deriveSubkeys(vaultKey, salt));
+
+    const cuerpo: CreateVaultWire = {
+      name: opciones.nombre,
+      salt: b64Encode(salt),
+      kdf_params: {
+        m_kib: KDF_DEFAULTS.m_kib,
+        t: KDF_DEFAULTS.t,
+        p: KDF_DEFAULTS.p,
+        dk_len: KDF_DEFAULTS.dk_len,
+      },
+      wrapped_key_pw: b64Encode(wrappedPw),
+      wrapped_key_rc: b64Encode(wrappedRc),
+      vault_pubkey: b64Encode(identidad.pubkey),
+      vault_id: b64Encode(vaultUuid),
+    };
+
+    const { id } = await this.pedirJson<{ id: number }>(`${base}/api/v1/vaults`, {
+      metodo: 'POST',
+      token: sesion.token,
+      cuerpo,
+    });
+
+    // 3) Estado local (los subkeys ya están en memoria: nada de re-bajar el material).
+    this.estadoLocal = {
+      serverUrl: base,
+      cuenta: { email: opciones.email, token: sesion.token, deviceId: sesion.device_id },
+      vault: {
+        numero: id,
+        nombre: opciones.nombre,
+        vaultUuidB64: b64Encode(vaultUuid),
+        epoch: 1,
+        subclaves: subclavesAHex(deriveSubkeys(vaultKey, salt)),
+      },
+    };
+    await this.guardarEstadoLocal(this.estadoLocal);
+
+    await this.iniciar();
+    return { id, recoveryHex: toHex(recoverySecret) };
   }
 
   // ------------------------------------------------------------------ ciclo de vida
