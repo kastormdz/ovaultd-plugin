@@ -55,6 +55,54 @@ const json = (cuerpo: unknown, status = 200): Response =>
     headers: { 'content-type': 'application/json' },
   });
 
+/**
+ * Mock stateful de un vault: el alta guarda el material, el PUT del material actualiza la
+ * envuelta, y el GET sirve SIEMPRE el estado actual (así el vincular final desenvuelve con
+ * la password vigente). El DELETE responde 204.
+ */
+function mockVaultEnMemoria() {
+  let material: Record<string, unknown> | null = null;
+  let ultimaEnvuelta: string | null = null;
+
+  const responder = (url: string): Response | null => {
+    if (url.endsWith('/api/v1/auth/signin')) return json({ token: 'tk-1', device_id: 7 });
+    if (url.endsWith('/api/v1/vaults')) {
+      const ultimo = pedidos[pedidos.length - 1];
+      if (ultimo?.init?.method === 'POST') {
+        material = JSON.parse(String(ultimo.init.body)) as Record<string, unknown>;
+        return json({ id: 42 });
+      }
+      return json([{ id: 42, name: 'Mi vault', role: 'owner' }]);
+    }
+    if (url.endsWith('/api/v1/vaults/42/material')) {
+      const ultimo = pedidos[pedidos.length - 1];
+      if (ultimo?.init?.method === 'PUT') {
+        ultimaEnvuelta = (JSON.parse(String(ultimo.init.body)) as { wrapped_key_pw: string })
+          .wrapped_key_pw;
+        return json({ ok: true });
+      }
+      return json({
+        id: 42,
+        vault_id: material?.vault_id,
+        name: 'Mi vault',
+        epoch: 1,
+        salt: material?.salt,
+        kdf_alg: 'argon2id',
+        kdf_params: JSON.stringify(material?.kdf_params),
+        wrapped_key_pw: ultimaEnvuelta ?? material?.wrapped_key_pw,
+        wrapped_key_rc: material?.wrapped_key_rc,
+        vault_pubkey: material?.vault_pubkey,
+      });
+    }
+    if (url.includes('/api/v1/vaults/42?confirm=')) {
+      return new Response(null, { status: 204 });
+    }
+    return null;
+  };
+
+  return { responder, material: () => material, envuelta: () => ultimaEnvuelta };
+}
+
 beforeEach(() => {
   pedidos = [];
 });
@@ -188,5 +236,124 @@ describe('crear vault desde el plugin', () => {
     // La SESIÓN de cuenta sobrevive al desvínculo (el modelo es: cuenta ≠ carpeta).
     expect(archivos.has(RUTA_SESION)).toBe(true);
     expect(motor.cuentaConectada).not.toBeNull();
+  });
+
+  it('recuperar con la recovery key: re-sella la envuelta y vincula con la password nueva', async () => {
+    const { app, archivos } = appFake();
+    vi.spyOn(MotorDeSync.prototype, 'iniciar').mockResolvedValue();
+    const vault = mockVaultEnMemoria();
+    mockearFetch(vault.responder);
+
+    const motor = new MotorDeSync(app as never, () => undefined);
+    await motor.entrar({
+      serverUrl: 'http://127.0.0.1:8894',
+      email: 'quien@ejemplo.com',
+      passwordCuenta: 'password-de-prueba',
+    });
+    const alta = await motor.crearVault({
+      nombre: 'Mi vault',
+      passwordVault: 'password-de-prueba',
+    });
+
+    // Device nuevo: sin vínculo local (la sesión queda).
+    await motor.desvincular();
+    expect(motor.vinculado).toBe(false);
+
+    const mensaje = await motor.recuperarVault({
+      numeroVault: 42,
+      recoveryHex: alta.recoveryHex,
+      passwordNueva: 'password-nueva-de-prueba',
+    });
+
+    expect(mensaje).toContain('vinculado');
+    expect(motor.vinculado).toBe(true);
+    expect(archivos.has(RUTA_ESTADO)).toBe(true);
+
+    // La prueba irrefutable: la envuelta NUEVA abre con la password NUEVA y desenvuelve la
+    // MISMA vault_key que la envuelta vieja abría con la password vieja.
+    const material = vault.material()!;
+    const salt = b64Decode(String(material.salt));
+    const uuid = b64Decode(String(material.vault_id));
+    const kdf = material.kdf_params as { m_kib: number; t: number; p: number; dk_len: number };
+
+    const kekNueva = deriveKek('password-nueva-de-prueba', salt, kdf);
+    const vkNueva = unwrapKeyPw(b64Decode(vault.envuelta()!), kekNueva, uuid, salt);
+    const kekVieja = deriveKek('password-de-prueba', salt, kdf);
+    const vkVieja = unwrapKeyPw(b64Decode(String(material.wrapped_key_pw)), kekVieja, uuid, salt);
+    expect(toHex(vkNueva)).toBe(toHex(vkVieja));
+
+    // Y una recovery equivocada no abre nada.
+    await motor.desvincular();
+    await expect(
+      motor.recuperarVault({
+        numeroVault: 42,
+        recoveryHex: 'ab'.repeat(32),
+        passwordNueva: 'password-nueva-de-prueba',
+      }),
+    ).rejects.toThrow(/no abre/);
+  }, 30_000);
+
+  it('cambiar la password del vault valida la actual y re-sella la envuelta', async () => {
+    const { app } = appFake();
+    vi.spyOn(MotorDeSync.prototype, 'iniciar').mockResolvedValue();
+    const vault = mockVaultEnMemoria();
+    mockearFetch(vault.responder);
+
+    const motor = new MotorDeSync(app as never, () => undefined);
+    await motor.entrar({
+      serverUrl: 'http://127.0.0.1:8894',
+      email: 'quien@ejemplo.com',
+      passwordCuenta: 'password-de-prueba',
+    });
+    await motor.crearVault({ nombre: 'Mi vault', passwordVault: 'password-de-prueba' });
+
+    // Con la actual MALA: rebota sin tocar el material.
+    await expect(
+      motor.cambiarPasswordVault({
+        numeroVault: 42,
+        passwordActual: 'mala-de-prueba',
+        passwordNueva: 'otra-de-prueba',
+      }),
+    ).rejects.toThrow(/actual/);
+    expect(vault.envuelta()).toBeNull();
+
+    // Con la actual correcta: re-sella y la nueva abre la MISMA vault_key.
+    await motor.cambiarPasswordVault({
+      numeroVault: 42,
+      passwordActual: 'password-de-prueba',
+      passwordNueva: 'otra-de-prueba',
+    });
+
+    const material = vault.material()!;
+    const salt = b64Decode(String(material.salt));
+    const uuid = b64Decode(String(material.vault_id));
+    const kdf = material.kdf_params as { m_kib: number; t: number; p: number; dk_len: number };
+    const kekNueva = deriveKek('otra-de-prueba', salt, kdf);
+    const vkNueva = unwrapKeyPw(b64Decode(vault.envuelta()!), kekNueva, uuid, salt);
+    const kekOriginal = deriveKek('password-de-prueba', salt, kdf);
+    const vkOriginal = unwrapKeyPw(b64Decode(String(material.wrapped_key_pw)), kekOriginal, uuid, salt);
+    expect(toHex(vkNueva)).toBe(toHex(vkOriginal));
+  }, 30_000);
+
+  it('borrar vault manda la confirmación y desvincula si era el de esta carpeta', async () => {
+    const { app } = appFake();
+    vi.spyOn(MotorDeSync.prototype, 'iniciar').mockResolvedValue();
+    const vault = mockVaultEnMemoria();
+    mockearFetch(vault.responder);
+
+    const motor = new MotorDeSync(app as never, () => undefined);
+    await motor.entrar({
+      serverUrl: 'http://127.0.0.1:8894',
+      email: 'quien@ejemplo.com',
+      passwordCuenta: 'password-de-prueba',
+    });
+    await motor.crearVault({ nombre: 'Mi vault', passwordVault: 'password-de-prueba' });
+    expect(motor.vinculado).toBe(true);
+
+    await motor.borrarVault(42, 'Mi vault');
+
+    const borrado = pedidos.find((p) => p.init?.method === 'DELETE');
+    expect(borrado?.url).toContain('confirm=Mi%20vault');
+    expect(motor.vinculado).toBe(false);
   });
 });

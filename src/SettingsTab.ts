@@ -13,6 +13,7 @@ import { App, Modal, Notice, PluginSettingTab, Setting } from 'obsidian';
 import type { VaultSummary } from '@ovaultd/protocol';
 
 import { comandoCrearVault, ModalDeVincular } from './CrearVault';
+import { abrirBorradoVault, abrirCambiarPassword, abrirRecuperarVault } from './LlavesDeVault';
 import { comandoExportar, comandoImportar } from './ExportImport';
 import type PluginOvaultd from './main';
 
@@ -190,6 +191,18 @@ export class TabAjustes extends PluginSettingTab {
             }).open();
           }),
         );
+
+      new Setting(containerEl)
+        .setName('Password del vault')
+        .setDesc(
+          'Cambiala acá (se valida la actual). La recovery key no cambia y los datos no se ' +
+            'recifran: solo se re-sella el sobre.',
+        )
+        .addButton((boton) =>
+          boton.setButtonText('Cambiar password…').onClick(() => {
+            abrirCambiarPassword(this.plugin, () => this.display());
+          }),
+        );
     }
 
     // ---------------------------------------------------------------- export / import
@@ -249,23 +262,41 @@ export class TabAjustes extends PluginSettingTab {
     for (const vault of this.vaultsDeLaCuenta) {
       const setting = new Setting(containerEl).setName(`#${vault.id} «${vault.name}»`);
       if (vinculado && actual !== null && actual.numero === vault.id) {
-        setting.setDesc('Vinculado a esta carpeta ✓');
+        setting
+          .setDesc('Vinculado a esta carpeta ✓')
+          .addButton((boton) =>
+            boton.setButtonText('Borrar…').setWarning().onClick(() => {
+              abrirBorradoVault(this.plugin, vault, () => this.display());
+            }),
+          );
       } else {
-        setting.setDesc('Vault de tu cuenta.').addButton((boton) =>
-          boton.setButtonText('Vincular…').onClick(() => {
-            if (this.plugin.motorVinculado) {
-              new Notice(
-                'ovaultd: esta carpeta ya está vinculada — desvinculá primero (abajo).',
-                8_000,
-              );
-              return;
-            }
-            new ModalDeVincular(this.plugin, vault, async (passwordVault) => {
-              const ok = await this.plugin.vincularVault({ numero: vault.id, passwordVault });
-              if (ok) this.display();
-            }).open();
-          }),
-        );
+        setting
+          .setDesc('Vault de tu cuenta.')
+          .addButton((boton) =>
+            boton.setButtonText('Vincular…').onClick(() => {
+              if (this.plugin.motorVinculado) {
+                new Notice(
+                  'ovaultd: esta carpeta ya está vinculada — desvinculá primero (abajo).',
+                  8_000,
+                );
+                return;
+              }
+              new ModalDeVincular(this.plugin, vault, async (passwordVault) => {
+                const ok = await this.plugin.vincularVault({ numero: vault.id, passwordVault });
+                if (ok) this.display();
+              }).open();
+            }),
+          )
+          .addButton((boton) =>
+            boton.setButtonText('Recuperar acceso…').onClick(() => {
+              abrirRecuperarVault(this.plugin, vault, () => this.display());
+            }),
+          )
+          .addButton((boton) =>
+            boton.setButtonText('Borrar…').setWarning().onClick(() => {
+              abrirBorradoVault(this.plugin, vault, () => this.display());
+            }),
+          );
       }
     }
 

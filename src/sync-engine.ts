@@ -41,6 +41,7 @@ import {
   randomVaultKey,
   randomVaultUuid,
   unwrapKeyPw,
+  unwrapKeyRc,
   wrapKeyPw,
   wrapKeyRc,
   type KdfParams,
@@ -253,6 +254,147 @@ export class MotorDeSync {
     return this.pedirJson<VaultSummary[]>(`${sesion.serverUrl}/api/v1/vaults`, {
       token: sesion.token,
     });
+  }
+
+  /** Pedido sin parseo de body (los 204 y los PUT de material no traen JSON útil). */
+  private async pedirRaw(
+    ruta: string,
+    opciones: { metodo?: string; token?: string; cuerpo?: unknown } = {},
+  ): Promise<Response> {
+    const headers: Record<string, string> = {};
+    if (opciones.token !== undefined) headers.authorization = `Bearer ${opciones.token}`;
+    if (opciones.cuerpo !== undefined) headers['content-type'] = 'application/json';
+
+    const respuesta = await fetch(ruta, {
+      method: opciones.metodo ?? 'GET',
+      headers,
+      body: opciones.cuerpo === undefined ? undefined : JSON.stringify(opciones.cuerpo),
+    });
+    if (!respuesta.ok) {
+      throw new Error(`${opciones.metodo ?? 'GET'} ${ruta} → HTTP ${respuesta.status}: ${await respuesta.text()}`);
+    }
+    return respuesta;
+  }
+
+  /** Sube la envuelta nueva de la password (re-sellado: recovery o cambio de password). */
+  private async actualizarEnvueltaPassword(
+    base: string,
+    token: string,
+    numeroVault: number,
+    wrappedPw: Uint8Array,
+  ): Promise<void> {
+    await this.pedirRaw(`${base}/api/v1/vaults/${numeroVault}/material`, {
+      metodo: 'PUT',
+      token,
+      cuerpo: { wrapped_key_pw: b64Encode(wrappedPw) },
+    });
+  }
+
+  /** Borra un vault de la cuenta (confirmación fuerte: el nombre exacto). */
+  async borrarVault(numeroVault: number, nombreConfirmado: string): Promise<void> {
+    const sesion = await this.leerSesion();
+    if (sesion === null) throw new Error('primero entrá con tu cuenta');
+
+    await this.pedirRaw(
+      `${sesion.serverUrl}/api/v1/vaults/${numeroVault}?confirm=${encodeURIComponent(nombreConfirmado)}`,
+      { metodo: 'DELETE', token: sesion.token },
+    );
+
+    // Si era el vault de esta carpeta, se suelta el vínculo local (los archivos no se tocan).
+    if (this.estadoLocal !== null && this.estadoLocal.vault.numero === numeroVault) {
+      await this.desvincular();
+    }
+  }
+
+  /**
+   * Recupera el acceso con la recovery key y define una password nueva: abre la envuelta de
+   * recovery, re-sella la envuelta de password y vincula la carpeta con la password nueva.
+   */
+  async recuperarVault(opciones: {
+    numeroVault: number;
+    recoveryHex: string;
+    passwordNueva: string;
+  }): Promise<string> {
+    const sesion = await this.leerSesion();
+    if (sesion === null) throw new Error('primero entrá con tu cuenta (Ajustes → Cuenta)');
+    const base = sesion.serverUrl;
+    this.fijarEstado('sincronizando', 'recuperando acceso…');
+
+    const material = await this.pedirJson<VaultMaterial>(
+      `${base}/api/v1/vaults/${opciones.numeroVault}/material`,
+      { token: sesion.token },
+    );
+    if (material.vault_id === null) {
+      throw new Error('el vault no tiene vault_id: material incompleto');
+    }
+
+    const salt = b64Decode(material.salt);
+    const vaultUuid = b64Decode(material.vault_id);
+    const recoverySecret = fromHex(opciones.recoveryHex.trim().toLowerCase());
+    if (recoverySecret.length !== 32) {
+      throw new Error('la recovery key tiene que ser 64 caracteres hexadecimales');
+    }
+
+    let vaultKey: Uint8Array;
+    try {
+      const kekRecovery = deriveKekRecovery(recoverySecret, salt);
+      vaultKey = unwrapKeyRc(b64Decode(material.wrapped_key_rc), kekRecovery, vaultUuid);
+    } catch {
+      throw new Error('esa recovery key no abre este vault');
+    }
+
+    const kekNueva = deriveKek(
+      opciones.passwordNueva,
+      salt,
+      JSON.parse(material.kdf_params) as KdfParams,
+    );
+    const wrappedPw = wrapKeyPw(vaultKey, kekNueva, vaultUuid, salt);
+    await this.actualizarEnvueltaPassword(base, sesion.token, opciones.numeroVault, wrappedPw);
+
+    // De acá en más es un vínculo normal con la password nueva.
+    return this.vincular({ numeroVault: opciones.numeroVault, passwordVault: opciones.passwordNueva });
+  }
+
+  /**
+   * Cambia la password del vault (validando la actual): re-sella la envuelta. La vault_key
+   * no cambia, así que el vínculo local (si existe) sigue siendo válido.
+   */
+  async cambiarPasswordVault(opciones: {
+    numeroVault: number;
+    passwordActual: string;
+    passwordNueva: string;
+  }): Promise<void> {
+    const sesion = await this.leerSesion();
+    if (sesion === null) throw new Error('primero entrá con tu cuenta (Ajustes → Cuenta)');
+    const base = sesion.serverUrl;
+    this.fijarEstado('sincronizando', 'cambiando la password del vault…');
+
+    const material = await this.pedirJson<VaultMaterial>(
+      `${base}/api/v1/vaults/${opciones.numeroVault}/material`,
+      { token: sesion.token },
+    );
+    if (material.vault_id === null) {
+      throw new Error('el vault no tiene vault_id: material incompleto');
+    }
+
+    const salt = b64Decode(material.salt);
+    const vaultUuid = b64Decode(material.vault_id);
+    const kekActual = deriveKek(opciones.passwordActual, salt);
+
+    let vaultKey: Uint8Array;
+    try {
+      vaultKey = unwrapKeyPw(b64Decode(material.wrapped_key_pw), kekActual, vaultUuid, salt);
+    } catch {
+      throw new Error('la password actual no abre este vault');
+    }
+
+    const kekNueva = deriveKek(
+      opciones.passwordNueva,
+      salt,
+      JSON.parse(material.kdf_params) as KdfParams,
+    );
+    const wrappedPw = wrapKeyPw(vaultKey, kekNueva, vaultUuid, salt);
+    await this.actualizarEnvueltaPassword(base, sesion.token, opciones.numeroVault, wrappedPw);
   }
 
   get vinculado(): boolean {
