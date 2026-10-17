@@ -1,0 +1,402 @@
+/**
+ * MotorDeSync — el núcleo durable de ovaultd corriendo DENTRO del renderer de Obsidian,
+ * sin puentes: el puerto de archivos es `AdaptadorDeArchivos` (API del vault) y el estado
+ * durable es el `StateStore` (IndexedDB del renderer). Mismo motor que el CLI.
+ *
+ * Ciclo de vida:
+ *  - `vincular()`: signin → material del vault (`GET /vaults/{id}/material`) → password
+ *    LOCAL del vault → KEK → unwrap → subclaves. Persiste lo necesario en
+ *    `estado-local.json` (junto al plugin) — NUNCA en `data.json`: cuando llegue la lista
+ *    blanca de configuración sincronizable, data.json es candidato a viajar y esto no.
+ *  - `iniciar()`: abre el store, recupera intenciones pendientes (journal) y abre la
+ *    `SyncConnection`; deja un ciclo de asentamiento agendado.
+ *  - `marcarSucio()`: los cambios coalescidos del puente piden un ciclo con debounce
+ *    global (1,5 s de quietud) y LOCK: un solo ciclo a la vez; si llegan cambios mientras
+ *    corre, se repite una pasada más (el pull converge).
+ *  - Conflicto ⇒ `con-conflictos` visible, estado consistente; los cambios locales quedan
+ *    en la outbox (save-first). Nada se pierde.
+ */
+
+import type { App } from 'obsidian';
+
+import {
+  StateStore,
+  SyncConnection,
+  correrCiclo,
+  recoverApplies,
+  type FileSystemPort,
+  type SyncCycleReport,
+} from '@ovaultd/core';
+import { deriveKek, deriveSubkeys, unwrapKeyPw, type KdfParams, type SubKeys } from '@ovaultd/crypto';
+import { b64Decode, fromHex, toHex, type VaultMaterial, type VaultSummary } from '@ovaultd/protocol';
+
+import { AdaptadorDeArchivos } from './ObsidianFileAdapter';
+
+const RUTA_ESTADO_LOCAL = '.obsidian/plugins/ovaultd/estado-local.json';
+const RUTA_LOG_MOTOR = '.obsidian/plugins/ovaultd/motor.log';
+const LOG_MAX_BYTES = 64 * 1024;
+const DEBOUNCE_MS = 1500;
+const ASENTAMIENTO_MS = 3000;
+
+export interface SubclavesEnHex {
+  content: string;
+  nonce: string;
+  path: string;
+  meta: string;
+  bind: string;
+  sign: string;
+}
+
+export interface EstadoLocalDelPlugin {
+  serverUrl: string;
+  cuenta: { email: string; token: string; deviceId: number };
+  vault: {
+    numero: number;
+    nombre: string;
+    vaultUuidB64: string;
+    epoch: number;
+    subclaves: SubclavesEnHex;
+  };
+}
+
+export type FaseDelMotor = 'apagado' | 'sincronizando' | 'al-dia' | 'con-conflictos' | 'error';
+
+export interface EstadoDelMotor {
+  fase: FaseDelMotor;
+  detalle: string;
+  ultimaSync: number | null;
+  ultimoReporte: SyncCycleReport | null;
+}
+
+const normalizarServer = (servidor: string): string => {
+  let out = servidor.trim();
+  if (!/^https?:\/\//i.test(out)) out = `http://${out}`;
+  return out.replace(/\/+$/, '');
+};
+
+const subclavesAHex = (subkeys: SubKeys): SubclavesEnHex => ({
+  content: toHex(subkeys.content),
+  nonce: toHex(subkeys.nonce),
+  path: toHex(subkeys.path),
+  meta: toHex(subkeys.meta),
+  bind: toHex(subkeys.bind),
+  sign: toHex(subkeys.sign),
+});
+
+const subclavesDeHex = (hex: SubclavesEnHex): SubKeys =>
+  ({
+    content: fromHex(hex.content),
+    nonce: fromHex(hex.nonce),
+    path: fromHex(hex.path),
+    meta: fromHex(hex.meta),
+    bind: fromHex(hex.bind),
+    sign: fromHex(hex.sign),
+  }) as unknown as SubKeys;
+
+export class MotorDeSync {
+  private store: StateStore | null = null;
+  private conn: SyncConnection | null = null;
+  private port: FileSystemPort | null = null;
+  private keys: SubKeys | null = null;
+  private vaultUuidBytes: Uint8Array | null = null;
+
+  private estadoLocal: EstadoLocalDelPlugin | null = null;
+  private corriendo = false;
+  private sucio = false;
+  private timerPendiente: number | null = null;
+  private iniciando = false;
+
+  estado: EstadoDelMotor = { fase: 'apagado', detalle: 'sin vincular', ultimaSync: null, ultimoReporte: null };
+
+  constructor(
+    private readonly app: App,
+    private readonly avisar: (estado: EstadoDelMotor) => void,
+  ) {}
+
+  // ------------------------------------------------------------------ estado local
+
+  async leerEstadoLocal(): Promise<EstadoLocalDelPlugin | null> {
+    try {
+      const crudo = await this.app.vault.adapter.read(RUTA_ESTADO_LOCAL);
+      return JSON.parse(crudo) as EstadoLocalDelPlugin;
+    } catch {
+      return null;
+    }
+  }
+
+  private async guardarEstadoLocal(estado: EstadoLocalDelPlugin): Promise<void> {
+    await this.app.vault.adapter.write(RUTA_ESTADO_LOCAL, `${JSON.stringify(estado, null, 2)}\n`);
+  }
+
+  get vinculado(): boolean {
+    return this.estadoLocal !== null;
+  }
+
+  get resumenVinculo(): string {
+    if (!this.estadoLocal) return 'sin vincular';
+    return `«${this.estadoLocal.vault.nombre}» en ${this.estadoLocal.serverUrl} (cuenta ${this.estadoLocal.cuenta.email})`;
+  }
+
+  // ------------------------------------------------------------------ vinculación
+
+  private async pedirJson<T>(
+    ruta: string,
+    opciones: { metodo?: string; token?: string; cuerpo?: unknown } = {},
+  ): Promise<T> {
+    const headers: Record<string, string> = {};
+    if (opciones.token !== undefined) headers.authorization = `Bearer ${opciones.token}`;
+    if (opciones.cuerpo !== undefined) headers['content-type'] = 'application/json';
+
+    const respuesta = await fetch(ruta, {
+      method: opciones.metodo ?? 'GET',
+      headers,
+      body: opciones.cuerpo === undefined ? undefined : JSON.stringify(opciones.cuerpo),
+    });
+    if (!respuesta.ok) {
+      throw new Error(`${opciones.metodo ?? 'GET'} ${ruta} → HTTP ${respuesta.status}: ${await respuesta.text()}`);
+    }
+    return (await respuesta.json()) as T;
+  }
+
+  /**
+   * Vincula cuenta + vault y deja el motor andando. La password del vault se usa para
+   * derivar (KEK → unwrap → subclaves) y NO se persiste; las passwords de cuenta también
+   * viajan solo a `signin`.
+   */
+  async vincular(opciones: {
+    serverUrl: string;
+    email: string;
+    passwordCuenta: string;
+    numeroVault: number;
+    passwordVault: string;
+  }): Promise<string> {
+    const base = normalizarServer(opciones.serverUrl);
+    this.fijarEstado('sincronizando', 'vinculando…');
+
+    // 1) Sesión (device nuevo por vinculación; revocable desde /devices).
+    const sesion = await this.pedirJson<{ token: string; device_id: number }>(
+      `${base}/api/v1/auth/signin`,
+      {
+        metodo: 'POST',
+        cuerpo: {
+          email: opciones.email,
+          password: opciones.passwordCuenta,
+          name: 'obsidian',
+          platform: 'obsidian',
+        },
+      },
+    );
+
+    // 2) El vault tiene que ser de esta cuenta.
+    const vaults = await this.pedirJson<VaultSummary[]>(`${base}/api/v1/vaults`, {
+      token: sesion.token,
+    });
+    const elegido = vaults.find((vault) => vault.id === opciones.numeroVault);
+    if (!elegido) {
+      const lista = vaults.map((vault) => `#${vault.id} «${vault.name}»`).join(', ') || '(ninguno)';
+      throw new Error(`el vault #${opciones.numeroVault} no está en la cuenta. Disponibles: ${lista}`);
+    }
+
+    // 3) Material + derivación local (el servidor no ve ninguna password).
+    const material = await this.pedirJson<VaultMaterial>(
+      `${base}/api/v1/vaults/${opciones.numeroVault}/material`,
+      { token: sesion.token },
+    );
+    if (material.vault_id === null) {
+      throw new Error('el vault no tiene vault_id: material incompleto');
+    }
+
+    const salt = b64Decode(material.salt);
+    const vaultUuid = b64Decode(material.vault_id);
+    // El wire manda los parámetros como string JSON (mismo camino que el CLI).
+    const kdfParams = JSON.parse(material.kdf_params) as KdfParams;
+    const kek = deriveKek(opciones.passwordVault, salt, kdfParams);
+    const vaultKey = unwrapKeyPw(b64Decode(material.wrapped_key_pw), kek, vaultUuid, salt);
+    const subkeys = deriveSubkeys(vaultKey, salt);
+
+    // 4) Persistir y arrancar.
+    this.estadoLocal = {
+      serverUrl: base,
+      cuenta: { email: opciones.email, token: sesion.token, deviceId: sesion.device_id },
+      vault: {
+        numero: elegido.id,
+        nombre: elegido.name,
+        vaultUuidB64: material.vault_id,
+        epoch: material.epoch,
+        subclaves: subclavesAHex(subkeys),
+      },
+    };
+    await this.guardarEstadoLocal(this.estadoLocal);
+
+    await this.iniciar();
+    return `vinculado: ${this.resumenVinculo}`;
+  }
+
+  // ------------------------------------------------------------------ ciclo de vida
+
+  async iniciar(): Promise<void> {
+    if (this.iniciando) return;
+    this.iniciando = true;
+    try {
+      const local = this.estadoLocal ?? (await this.leerEstadoLocal());
+      if (!local) {
+        this.fijarEstado('apagado', 'sin vincular');
+        return;
+      }
+      this.estadoLocal = local;
+
+      this.conn?.close();
+      this.conn = null;
+      this.store?.close();
+
+      this.port = new AdaptadorDeArchivos(this.app.vault.adapter);
+      this.store = await StateStore.open('plugin');
+      this.keys = subclavesDeHex(local.vault.subclaves);
+      this.vaultUuidBytes = b64Decode(local.vault.vaultUuidB64);
+
+      // Journal: intenciones de un cierre anterior se recuperan (hash a hash, sin adivinar).
+      const recuperacion = await recoverApplies({
+        store: this.store,
+        port: this.port,
+        keys: this.keys,
+      });
+
+      this.conn = new SyncConnection({
+        baseUrl: local.serverUrl,
+        token: local.cuenta.token,
+        vault: local.vault.numero,
+        device: local.cuenta.deviceId,
+        keys: this.keys,
+      });
+      const checkpoint = await this.store.readCheckpoint().catch(() => null);
+      await this.conn.open({ since: checkpoint?.since ?? 0 });
+
+      const detalleRecuperacion =
+        recuperacion.completed + recuperacion.cleaned + recuperacion.blocked > 0
+          ? ` · recuperación: ${recuperacion.completed} completadas, ${recuperacion.cleaned} limpiadas, ${recuperacion.blocked} bloqueadas`
+          : '';
+      this.fijarEstado('al-dia', `conectado a ${local.serverUrl}${detalleRecuperacion}`);
+
+      // Asentamiento: un ciclo tras el arranque (el puente puede haber perdido eventos).
+      this.marcarSucio(ASENTAMIENTO_MS);
+    } catch (error) {
+      this.fijarEstado('error', `no pude iniciar el motor: ${String(error)}`);
+      throw error;
+    } finally {
+      this.iniciando = false;
+    }
+  }
+
+  async detener(): Promise<void> {
+    if (this.timerPendiente !== null) {
+      globalThis.clearTimeout(this.timerPendiente);
+      this.timerPendiente = null;
+    }
+    this.conn?.close();
+    this.conn = null;
+    this.store?.close();
+    this.store = null;
+    this.port = null;
+    this.keys = null;
+    this.vaultUuidBytes = null;
+    this.fijarEstado('apagado', 'motor detenido');
+  }
+
+  // ------------------------------------------------------------------ el ciclo
+
+  /** Los cambios coalescidos del puente entran por acá: debounce global + lock. */
+  marcarSucio(demoraMs = DEBOUNCE_MS): void {
+    if (this.conn === null) return;
+    this.sucio = true;
+    if (this.timerPendiente !== null) globalThis.clearTimeout(this.timerPendiente);
+    this.timerPendiente = globalThis.setTimeout(() => {
+      this.timerPendiente = null;
+      void this.correrCicloSeguro();
+    }, demoraMs);
+  }
+
+  /** Ciclo a demanda (comando "Sincronizar ahora"). */
+  async correrAhora(): Promise<SyncCycleReport | null> {
+    return this.correrCicloSeguro();
+  }
+
+  private async correrCicloSeguro(): Promise<SyncCycleReport | null> {
+    if (this.store === null || this.conn === null || this.keys === null || this.port === null) {
+      return null;
+    }
+    if (this.corriendo) {
+      this.sucio = true; // ya hay un ciclo: que repita al terminar
+      return null;
+    }
+
+    this.corriendo = true;
+    this.fijarEstado('sincronizando', 'ciclo en curso');
+    try {
+      let reporte: SyncCycleReport;
+      do {
+        this.sucio = false;
+        reporte = await correrCiclo({
+          store: this.store,
+          port: this.port,
+          keys: this.keys,
+          conn: this.conn,
+          vaultUuid: this.vaultUuidBytes!,
+          epoch: this.estadoLocal?.vault.epoch ?? 1,
+        });
+      } while (this.sucio);
+
+      this.estado.ultimaSync = Date.now();
+      this.estado.ultimoReporte = reporte;
+
+      if (reporte.estado === 'con-conflictos') {
+        const primero = reporte.conflictos[0];
+        this.fijarEstado(
+          'con-conflictos',
+          `${reporte.conflictos.length} conflicto(s): ${primero?.mensaje ?? 'sin detalle'}`,
+        );
+      } else if (reporte.estado === 'resync-requerido') {
+        this.fijarEstado('error', 'resync requerido (fase 4): el historial del server no alcanza');
+      } else {
+        const subidas = reporte.push?.empujadas ?? 0;
+        const bajadas = reporte.pull.applied;
+        const detalle =
+          subidas + bajadas === 0 ? 'sin cambios' : `↑${subidas} subidas · ↓${bajadas} aplicadas`;
+        this.fijarEstado('al-dia', detalle);
+      }
+
+      return reporte;
+    } catch (error) {
+      this.fijarEstado('error', `ciclo con error: ${String(error)}`);
+      return null;
+    } finally {
+      this.corriendo = false;
+    }
+  }
+
+  private fijarEstado(fase: FaseDelMotor, detalle: string): void {
+    this.estado = { ...this.estado, fase, detalle };
+    this.avisar(this.estado);
+    void this.registrarEnLog(fase, detalle);
+  }
+
+  /**
+   * Log operativo acotado junto al plugin (sin UI): cada transición de fase queda ahí.
+   * El configDir no emite eventos y los dotfiles son invisibles al watcher (medido en el
+   * spike), así que este archivo no puede alimentar bucles. Nunca rompe al motor.
+   */
+  private async registrarEnLog(fase: FaseDelMotor, detalle: string): Promise<void> {
+    try {
+      const linea = `${new Date().toISOString()} ${fase} — ${detalle}\n`;
+      let previo = '';
+      try {
+        previo = await this.app.vault.adapter.read(RUTA_LOG_MOTOR);
+      } catch {
+        /* todavía no existe */
+      }
+      if (previo.length > LOG_MAX_BYTES) previo = previo.slice(-LOG_MAX_BYTES / 2);
+      await this.app.vault.adapter.write(RUTA_LOG_MOTOR, previo + linea);
+    } catch {
+      /* el log jamás rompe el motor */
+    }
+  }
+}
