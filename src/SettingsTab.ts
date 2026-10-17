@@ -1,4 +1,4 @@
-import { App, PluginSettingTab, Setting } from 'obsidian';
+import { App, Modal, Notice, PluginSettingTab, Setting } from 'obsidian';
 
 import { comandoExportar, comandoImportar } from './ExportImport';
 import { comandoCrearVault } from './CrearVault';
@@ -94,8 +94,25 @@ export class TabAjustes extends PluginSettingTab {
         }),
       );
 
-    if (!vinculado) {
-      containerEl.createEl('h3', { text: 'Vault' });
+    containerEl.createEl('h3', { text: 'Vault' });
+
+    if (vinculado) {
+      new Setting(containerEl)
+        .setName('Carpeta vinculada')
+        .setDesc(
+          `${estado.detalle}. Soltar el vínculo borra el estado local (sesión, subclaves e ` +
+            'índice) de este equipo; los datos del servidor no se tocan.',
+        )
+        .addButton((boton) =>
+          boton.setButtonText('Desvincular').setWarning().onClick(() => {
+            new ModalDeDesvinculo(this.app, async () => {
+              await this.plugin.motor.desvincular();
+              new Notice('ovaultd: carpeta desvinculada. Podés crear o vincular otro vault.');
+              this.display();
+            }).open();
+          }),
+        );
+    } else {
       new Setting(containerEl)
         .setName('Crear un vault nuevo')
         .setDesc(
@@ -109,7 +126,7 @@ export class TabAjustes extends PluginSettingTab {
         );
     }
 
-    containerEl.createEl('h3', { text: 'Servidor y cuenta' });
+    containerEl.createEl('h3', { text: 'Vincular a un vault existente' });
 
     new Setting(containerEl)
       .setName('Servidor')
@@ -148,11 +165,9 @@ export class TabAjustes extends PluginSettingTab {
         });
       });
 
-    containerEl.createEl('h3', { text: 'Vault' });
-
     new Setting(containerEl)
       .setName('Número de vault')
-      .setDesc('El # del vault en el servidor (si no lo sabés, empezá con 1).')
+      .setDesc('El # del vault EXISTENTE a vincular (los vaults nuevos se crean con «Crear un vault nuevo», arriba).')
       .addText((texto) =>
         texto
           .setPlaceholder('1')
@@ -201,5 +216,40 @@ export class TabAjustes extends PluginSettingTab {
             this.display();
           }),
       );
+  }
+}
+
+/** Confirmación del desvínculo: una acción con consecuencias, sin sorpresas. */
+class ModalDeDesvinculo extends Modal {
+  constructor(
+    app: App,
+    private readonly alConfirmar: () => Promise<void>,
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    this.contentEl.createEl('h2', { text: 'Desvincular esta carpeta' });
+    this.contentEl.createEl('p', {
+      text:
+        'Se borra el estado local (sesión, subclaves e índice de sincronización) de este ' +
+        'equipo. Los datos del servidor no se tocan: para volver a vincular necesitás la ' +
+        'password del vault.',
+    });
+    new Setting(this.contentEl)
+      .addButton((boton) => boton.setButtonText('Cancelar').onClick(() => this.close()))
+      .addButton((boton) =>
+        boton
+          .setButtonText('Desvincular')
+          .setWarning()
+          .onClick(() => {
+            this.close();
+            void this.alConfirmar();
+          }),
+      );
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
   }
 }

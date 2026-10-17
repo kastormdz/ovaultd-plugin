@@ -60,6 +60,8 @@ import { AdaptadorDeArchivos } from './ObsidianFileAdapter';
 
 const RUTA_ESTADO_LOCAL = '.obsidian/plugins/ovaultd/estado-local.json';
 const RUTA_LOG_MOTOR = '.obsidian/plugins/ovaultd/motor.log';
+/** Nombre de la base IndexedDB del índice durable del motor. */
+const DB_INDICE = 'plugin';
 const LOG_MAX_BYTES = 64 * 1024;
 const DEBOUNCE_MS = 1500;
 const ASENTAMIENTO_MS = 3000;
@@ -118,6 +120,17 @@ const subclavesDeHex = (hex: SubclavesEnHex): SubKeys =>
     bind: fromHex(hex.bind),
     sign: fromHex(hex.sign),
   }) as unknown as SubKeys;
+
+/** Borra la DB del índice del motor; inofensivo fuera del renderer (tests). */
+function borrarIndiceDurable(): Promise<void> {
+  if (typeof indexedDB === 'undefined') return Promise.resolve();
+  return new Promise((listo) => {
+    const pedido = indexedDB.deleteDatabase(DB_INDICE);
+    pedido.onsuccess = () => listo();
+    pedido.onerror = () => listo();
+    pedido.onblocked = () => listo(); // una conexión colgada no debe frenar el desvínculo
+  });
+}
 
 export class MotorDeSync {
   private store: StateStore | null = null;
@@ -420,7 +433,7 @@ export class MotorDeSync {
       this.store?.close();
 
       this.port = new AdaptadorDeArchivos(this.app.vault.adapter);
-      this.store = await StateStore.open('plugin');
+      this.store = await StateStore.open(DB_INDICE);
       this.keys = subclavesDeHex(local.vault.subclaves);
       this.vaultUuidBytes = b64Decode(local.vault.vaultUuidB64);
 
@@ -470,6 +483,20 @@ export class MotorDeSync {
     this.keys = null;
     this.vaultUuidBytes = null;
     this.fijarEstado('apagado', 'motor detenido');
+  }
+
+  /**
+   * Suelta el vínculo de esta carpeta: cierra el motor, borra el estado local y ELIMINA el
+   * índice durable del vault anterior. Lo último es clave: si el índice sobreviviera, un
+   * vault NUEVO sobre la misma carpeta compararía contra la base vieja y no subiría nada.
+   * Los datos del vault remoto no se tocan.
+   */
+  async desvincular(): Promise<void> {
+    await this.detener();
+    this.estadoLocal = null;
+    await this.app.vault.adapter.remove(RUTA_ESTADO_LOCAL).catch(() => undefined);
+    await borrarIndiceDurable();
+    this.fijarEstado('apagado', 'sin vincular');
   }
 
   // ------------------------------------------------------------------ el ciclo

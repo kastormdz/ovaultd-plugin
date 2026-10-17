@@ -28,6 +28,9 @@ function appFake() {
           async write(ruta: string, contenido: string) {
             archivos.set(ruta, contenido);
           },
+          async remove(ruta: string) {
+            archivos.delete(ruta);
+          },
         },
       },
     },
@@ -148,5 +151,32 @@ describe('crear vault desde el plugin', () => {
     // Sin estado y sin alta: el fallo no deja el plugin "medio vinculado".
     expect(archivos.has(RUTA_ESTADO)).toBe(false);
     expect(pedidos.some((p) => p.url.endsWith('/api/v1/vaults'))).toBe(false);
+  });
+
+  it('desvincular borra el estado local y deja el motor apagado', async () => {
+    const { app, archivos } = appFake();
+    vi.spyOn(MotorDeSync.prototype, 'iniciar').mockResolvedValue();
+    mockearFetch((url) => {
+      if (url.endsWith('/api/v1/auth/signin')) return json({ token: 'tk-1', device_id: 7 });
+      if (url.endsWith('/api/v1/vaults')) return json({ id: 42 });
+      return null;
+    });
+
+    const motor = new MotorDeSync(app as never, () => undefined);
+    await motor.crearVault({
+      serverUrl: 'http://127.0.0.1:8894',
+      email: 'quien@ejemplo.com',
+      passwordCuenta: 'password-de-prueba',
+      nombre: 'Mi vault',
+      passwordVault: 'password-de-prueba',
+    });
+    expect(motor.vinculado).toBe(true);
+    expect(archivos.has(RUTA_ESTADO)).toBe(true);
+
+    await motor.desvincular();
+
+    expect(motor.vinculado).toBe(false);
+    expect(archivos.has(RUTA_ESTADO)).toBe(false);
+    expect(motor.estado.fase).toBe('apagado');
   });
 });

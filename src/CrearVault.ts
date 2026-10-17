@@ -39,8 +39,9 @@ class ModalDeCreacion extends Modal {
     this.contentEl.createEl('h2', { text: 'Crear vault nuevo' });
     this.contentEl.createEl('p', {
       text:
-        'La password de cifrado viaja a tu cuenta del servidor, nunca al vault: este ' +
-        'equipo la deriva localmente. Guardala en tu gestor de contraseñas antes de seguir.',
+        'Vas a crear un vault NUEVO: la password de cifrado la INVENTÁS acá (nadie te la ' +
+        'puede dar — el servidor nunca la ve, es la que abre tus datos y no se puede ' +
+        'recuperar). Guardala en tu gestor de contraseñas antes de seguir.',
     });
 
     new Setting(this.contentEl).setName('Servidor').addText((texto) =>
