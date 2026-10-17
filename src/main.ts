@@ -209,29 +209,55 @@ export default class PluginOvaultd extends Plugin {
     }
   }
 
-  /** La llama el formulario de ajustes: vinculación completa (login + material + subclaves). */
-  async vincularVault(opciones: {
+  /** La llama el formulario de cuenta: login de cuenta UNA vez (sesión persistente). */
+  async entrarCuenta(opciones: {
     serverUrl: string;
     email: string;
     passwordCuenta: string;
+  }): Promise<boolean> {
+    if (!opciones.serverUrl || !opciones.email || !opciones.passwordCuenta) {
+      new Notice('ovaultd: completá servidor, email y password de la cuenta.');
+      return false;
+    }
+    new Notice('ovaultd: entrando…');
+    try {
+      const mensaje = await this.motor.entrar(opciones);
+      this.ajustes.serverUrl = opciones.serverUrl.trim();
+      this.ajustes.email = opciones.email.trim();
+      await this.guardarAjustes();
+      new Notice(`ovaultd: ${mensaje}`);
+      return true;
+    } catch (error) {
+      new Notice(`ovaultd: no pude entrar — ${String(error)}`, 10_000);
+      return false;
+    }
+  }
+
+  get cuentaConectada() {
+    return this.motor.cuentaConectada;
+  }
+
+  get vaultVinculado() {
+    return this.motor.vaultVinculado;
+  }
+
+  /** La llama la lista de vaults: vínculo de un vault de la cuenta conectada. */
+  async vincularVault(opciones: {
     numero: number;
     passwordVault: string;
   }): Promise<boolean> {
-    if (!opciones.serverUrl || !opciones.email || !opciones.passwordCuenta || !opciones.passwordVault) {
-      new Notice('ovaultd: completá servidor, email y las dos passwords.');
+    if (!Number.isInteger(opciones.numero) || opciones.numero <= 0) {
+      new Notice('ovaultd: elegí un vault de la lista.');
       return false;
     }
-    if (!Number.isInteger(opciones.numero) || opciones.numero <= 0) {
-      new Notice('ovaultd: el número de vault tiene que ser un entero positivo (ej. 1).');
+    if (!opciones.passwordVault) {
+      new Notice('ovaultd: falta la password del vault.');
       return false;
     }
 
     new Notice('ovaultd: vinculando (derivación de clave local, puede tardar)…');
     try {
       const mensaje = await this.motor.vincular({
-        serverUrl: opciones.serverUrl,
-        email: opciones.email,
-        passwordCuenta: opciones.passwordCuenta,
         numeroVault: opciones.numero,
         passwordVault: opciones.passwordVault,
       });

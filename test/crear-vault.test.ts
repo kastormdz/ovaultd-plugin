@@ -12,6 +12,7 @@ import { b64Decode, toHex } from '@ovaultd/protocol';
 import { MotorDeSync, type EstadoLocalDelPlugin } from '../src/sync-engine';
 
 const RUTA_ESTADO = '.obsidian/plugins/ovaultd/estado-local.json';
+const RUTA_SESION = '.obsidian/plugins/ovaultd/sesion-cuenta.json';
 
 function appFake() {
   const archivos = new Map<string, string>();
@@ -74,18 +75,20 @@ describe('crear vault desde el plugin', () => {
     });
 
     const motor = new MotorDeSync(app as never, () => undefined);
-    const resultado = await motor.crearVault({
+    await motor.entrar({
       serverUrl: 'http://127.0.0.1:8894',
       email: 'quien@ejemplo.com',
       passwordCuenta: 'password-de-prueba',
+    });
+    const resultado = await motor.crearVault({
       nombre: 'Mi vault',
-      passwordVault: 'password-vault',
+      passwordVault: 'password-de-prueba',
     });
 
     expect(resultado.id).toBe(42);
     expect(resultado.recoveryHex).toMatch(/^[0-9a-f]{64}$/);
 
-    // 1) Las credenciales de cuenta viajan SOLO al signin.
+    // 1) Las credenciales de cuenta viajan SOLO al login (una vez).
     const signin = pedidos.find((p) => p.url.endsWith('/api/v1/auth/signin'));
     expect(JSON.parse(String(signin?.init?.body))).toMatchObject({
       email: 'quien@ejemplo.com',
@@ -107,7 +110,6 @@ describe('crear vault desde el plugin', () => {
     expect(String(cuerpo.wrapped_key_rc).length).toBeGreaterThan(0);
     const serializado = JSON.stringify(cuerpo);
     expect(serializado).not.toContain('password-de-prueba');
-    expect(serializado).not.toContain('password-vault');
 
     // 3) El estado local: vinculado, con la cuenta y los subkeys.
     const estado = JSON.parse(archivos.get(RUTA_ESTADO) ?? '') as EstadoLocalDelPlugin;
@@ -119,14 +121,14 @@ describe('crear vault desde el plugin', () => {
     //    los subkeys guardados (si esto falla, el vault nace ilegible).
     const salt = b64Decode(String(cuerpo.salt));
     const uuid = b64Decode(String(cuerpo.vault_id));
-    const kek = deriveKek('password-vault', salt);
+    const kek = deriveKek('password-de-prueba', salt);
     const vaultKey = unwrapKeyPw(b64Decode(String(cuerpo.wrapped_key_pw)), kek, uuid, salt);
     const subkeys = deriveSubkeys(vaultKey, salt);
     expect(toHex(subkeys.content)).toBe(estado.vault.subclaves.content);
     expect(toHex(subkeys.sign)).toBe(estado.vault.subclaves.sign);
   });
 
-  it('si el signin falla, propaga el error y NO deja estado a medias', async () => {
+  it('si el login falla, propaga el error y NO deja estado a medias', async () => {
     const { app, archivos } = appFake();
     vi.spyOn(MotorDeSync.prototype, 'iniciar').mockResolvedValue();
     mockearFetch((url) => {
@@ -139,17 +141,20 @@ describe('crear vault desde el plugin', () => {
 
     const motor = new MotorDeSync(app as never, () => undefined);
     await expect(
-      motor.crearVault({
+      motor.entrar({
         serverUrl: 'http://127.0.0.1:8894',
         email: 'quien@ejemplo.com',
-        passwordCuenta: 'mala-password',
-        nombre: 'Mi vault',
-        passwordVault: 'password-vault',
+        passwordCuenta: 'mala-password-de-prueba',
       }),
     ).rejects.toThrow();
 
-    // Sin estado y sin alta: el fallo no deja el plugin "medio vinculado".
+    // Sin sesión no se puede crear: no hay camino a medias.
+    await expect(
+      motor.crearVault({ nombre: 'Mi vault', passwordVault: 'password-de-prueba' }),
+    ).rejects.toThrow(/entrá/);
+
     expect(archivos.has(RUTA_ESTADO)).toBe(false);
+    expect(archivos.has(RUTA_SESION)).toBe(false);
     expect(pedidos.some((p) => p.url.endsWith('/api/v1/vaults'))).toBe(false);
   });
 
@@ -163,10 +168,12 @@ describe('crear vault desde el plugin', () => {
     });
 
     const motor = new MotorDeSync(app as never, () => undefined);
-    await motor.crearVault({
+    await motor.entrar({
       serverUrl: 'http://127.0.0.1:8894',
       email: 'quien@ejemplo.com',
       passwordCuenta: 'password-de-prueba',
+    });
+    await motor.crearVault({
       nombre: 'Mi vault',
       passwordVault: 'password-de-prueba',
     });
@@ -178,5 +185,8 @@ describe('crear vault desde el plugin', () => {
     expect(motor.vinculado).toBe(false);
     expect(archivos.has(RUTA_ESTADO)).toBe(false);
     expect(motor.estado.fase).toBe('apagado');
+    // La SESIÓN de cuenta sobrevive al desvínculo (el modelo es: cuenta ≠ carpeta).
+    expect(archivos.has(RUTA_SESION)).toBe(true);
+    expect(motor.cuentaConectada).not.toBeNull();
   });
 });

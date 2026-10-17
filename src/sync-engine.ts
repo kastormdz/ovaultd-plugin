@@ -59,6 +59,7 @@ import {
 import { AdaptadorDeArchivos } from './ObsidianFileAdapter';
 
 const RUTA_ESTADO_LOCAL = '.obsidian/plugins/ovaultd/estado-local.json';
+const RUTA_SESION = '.obsidian/plugins/ovaultd/sesion-cuenta.json';
 const RUTA_LOG_MOTOR = '.obsidian/plugins/ovaultd/motor.log';
 /** Nombre de la base IndexedDB del índice durable del motor. */
 const DB_INDICE = 'plugin';
@@ -85,6 +86,17 @@ export interface EstadoLocalDelPlugin {
     epoch: number;
     subclaves: SubclavesEnHex;
   };
+}
+
+/**
+ * Sesión de CUENTA (independiente del vault): se loguea una vez y las operaciones de
+ * cuenta (listar/crear/borrar vaults) la reusan. Sobrevive al desvínculo de un vault.
+ */
+export interface SesionDeCuenta {
+  serverUrl: string;
+  email: string;
+  token: string;
+  deviceId: number;
 }
 
 export type FaseDelMotor = 'apagado' | 'sincronizando' | 'al-dia' | 'con-conflictos' | 'error';
@@ -140,6 +152,7 @@ export class MotorDeSync {
   private vaultUuidBytes: Uint8Array | null = null;
 
   private estadoLocal: EstadoLocalDelPlugin | null = null;
+  private sesion: SesionDeCuenta | null = null;
   private corriendo = false;
   private sucio = false;
   private timerPendiente: number | null = null;
@@ -167,8 +180,88 @@ export class MotorDeSync {
     await this.app.vault.adapter.write(RUTA_ESTADO_LOCAL, `${JSON.stringify(estado, null, 2)}\n`);
   }
 
+  // ------------------------------------------------------------------ sesión de cuenta
+
+  async leerSesion(): Promise<SesionDeCuenta | null> {
+    if (this.sesion !== null) return this.sesion;
+    try {
+      const crudo = await this.app.vault.adapter.read(RUTA_SESION);
+      this.sesion = JSON.parse(crudo) as SesionDeCuenta;
+      return this.sesion;
+    } catch {
+      // Migración suave: un vínculo anterior trae la cuenta adentro del estado local.
+      const local = this.estadoLocal ?? (await this.leerEstadoLocal());
+      if (local !== null) {
+        this.sesion = {
+          serverUrl: local.serverUrl,
+          email: local.cuenta.email,
+          token: local.cuenta.token,
+          deviceId: local.cuenta.deviceId,
+        };
+        return this.sesion;
+      }
+      return null;
+    }
+  }
+
+  private async guardarSesion(sesion: SesionDeCuenta): Promise<void> {
+    this.sesion = sesion;
+    await this.app.vault.adapter.write(RUTA_SESION, `${JSON.stringify(sesion, null, 2)}\n`);
+  }
+
+  get cuentaConectada(): SesionDeCuenta | null {
+    return this.sesion;
+  }
+
+  /** Login de cuenta UNA vez: el device queda ligado a la cuenta (no a un vault). */
+  async entrar(opciones: {
+    serverUrl: string;
+    email: string;
+    passwordCuenta: string;
+  }): Promise<string> {
+    const base = normalizarServer(opciones.serverUrl);
+    const ses = await this.pedirJson<{ token: string; device_id: number }>(
+      `${base}/api/v1/auth/signin`,
+      {
+        metodo: 'POST',
+        cuerpo: {
+          email: opciones.email,
+          password: opciones.passwordCuenta,
+          name: 'obsidian',
+          platform: 'obsidian',
+        },
+      },
+    );
+    await this.guardarSesion({
+      serverUrl: base,
+      email: opciones.email,
+      token: ses.token,
+      deviceId: ses.device_id,
+    });
+    return `conectado como ${opciones.email} en ${base}`;
+  }
+
+  async salir(): Promise<void> {
+    this.sesion = null;
+    await this.app.vault.adapter.remove(RUTA_SESION).catch(() => undefined);
+  }
+
+  /** Los vaults de la cuenta (con la sesión): lista para vincular/crear/borrar. */
+  async listarVaultsDeLaCuenta(): Promise<VaultSummary[]> {
+    const sesion = await this.leerSesion();
+    if (sesion === null) throw new Error('primero entrá con tu cuenta');
+    return this.pedirJson<VaultSummary[]>(`${sesion.serverUrl}/api/v1/vaults`, {
+      token: sesion.token,
+    });
+  }
+
   get vinculado(): boolean {
     return this.estadoLocal !== null;
+  }
+
+  get vaultVinculado(): { numero: number; nombre: string } | null {
+    if (this.estadoLocal === null) return null;
+    return { numero: this.estadoLocal.vault.numero, nombre: this.estadoLocal.vault.nombre };
   }
 
   get resumenVinculo(): string {
@@ -262,35 +355,16 @@ export class MotorDeSync {
   }
 
   /**
-   * Vincula cuenta + vault y deja el motor andando. La password del vault se usa para
-   * derivar (KEK → unwrap → subclaves) y NO se persiste; las passwords de cuenta también
-   * viajan solo a `signin`.
+   * Vincula la carpeta a un vault de la cuenta CONECTADA. La password del vault se usa para
+   * derivar (KEK → unwrap → subclaves) y NO se persiste.
    */
-  async vincular(opciones: {
-    serverUrl: string;
-    email: string;
-    passwordCuenta: string;
-    numeroVault: number;
-    passwordVault: string;
-  }): Promise<string> {
-    const base = normalizarServer(opciones.serverUrl);
+  async vincular(opciones: { numeroVault: number; passwordVault: string }): Promise<string> {
+    const sesion = await this.leerSesion();
+    if (sesion === null) throw new Error('primero entrá con tu cuenta (Ajustes → Cuenta)');
+    const base = sesion.serverUrl;
     this.fijarEstado('sincronizando', 'vinculando…');
 
-    // 1) Sesión (device nuevo por vinculación; revocable desde /devices).
-    const sesion = await this.pedirJson<{ token: string; device_id: number }>(
-      `${base}/api/v1/auth/signin`,
-      {
-        metodo: 'POST',
-        cuerpo: {
-          email: opciones.email,
-          password: opciones.passwordCuenta,
-          name: 'obsidian',
-          platform: 'obsidian',
-        },
-      },
-    );
-
-    // 2) El vault tiene que ser de esta cuenta.
+    // 1) El vault tiene que ser de esta cuenta (misma sesión para todo).
     const vaults = await this.pedirJson<VaultSummary[]>(`${base}/api/v1/vaults`, {
       token: sesion.token,
     });
@@ -305,7 +379,7 @@ export class MotorDeSync {
       throw new Error(`el vault #${opciones.numeroVault} no está en la cuenta. Disponibles: ${lista}`);
     }
 
-    // 3) Material + derivación local (el servidor no ve ninguna password).
+    // 2) Material + derivación local (el servidor no ve ninguna password).
     const material = await this.pedirJson<VaultMaterial>(
       `${base}/api/v1/vaults/${opciones.numeroVault}/material`,
       { token: sesion.token },
@@ -322,10 +396,10 @@ export class MotorDeSync {
     const vaultKey = unwrapKeyPw(b64Decode(material.wrapped_key_pw), kek, vaultUuid, salt);
     const subkeys = deriveSubkeys(vaultKey, salt);
 
-    // 4) Persistir y arrancar.
+    // 3) Persistir y arrancar.
     this.estadoLocal = {
       serverUrl: base,
-      cuenta: { email: opciones.email, token: sesion.token, deviceId: sesion.device_id },
+      cuenta: { email: sesion.email, token: sesion.token, deviceId: sesion.deviceId },
       vault: {
         numero: elegido.id,
         nombre: elegido.name,
@@ -346,28 +420,13 @@ export class MotorDeSync {
    * recovery key se devuelve UNA vez — quien la reciba no la puede volver a pedir.
    */
   async crearVault(opciones: {
-    serverUrl: string;
-    email: string;
-    passwordCuenta: string;
     nombre: string;
     passwordVault: string;
   }): Promise<{ id: number; recoveryHex: string }> {
-    const base = normalizarServer(opciones.serverUrl);
+    const sesion = await this.leerSesion();
+    if (sesion === null) throw new Error('primero entrá con tu cuenta (Ajustes → Cuenta)');
+    const base = sesion.serverUrl;
     this.fijarEstado('sincronizando', 'creando vault…');
-
-    // 1) Sesión (device nuevo; revocable desde /devices).
-    const sesion = await this.pedirJson<{ token: string; device_id: number }>(
-      `${base}/api/v1/auth/signin`,
-      {
-        metodo: 'POST',
-        cuerpo: {
-          email: opciones.email,
-          password: opciones.passwordCuenta,
-          name: 'obsidian',
-          platform: 'obsidian',
-        },
-      },
-    );
 
     // 2) Material nuevo (idéntico a `create-remote` del CLI).
     const vaultUuid = randomVaultUuid();
@@ -405,7 +464,7 @@ export class MotorDeSync {
     // 3) Estado local (los subkeys ya están en memoria: nada de re-bajar el material).
     this.estadoLocal = {
       serverUrl: base,
-      cuenta: { email: opciones.email, token: sesion.token, deviceId: sesion.device_id },
+      cuenta: { email: sesion.email, token: sesion.token, deviceId: sesion.deviceId },
       vault: {
         numero: id,
         nombre: opciones.nombre,
@@ -428,10 +487,12 @@ export class MotorDeSync {
     try {
       const local = this.estadoLocal ?? (await this.leerEstadoLocal());
       if (!local) {
+        await this.leerSesion(); // puede haber cuenta conectada sin vault vinculado
         this.fijarEstado('apagado', 'sin vincular');
         return;
       }
       this.estadoLocal = local;
+      await this.leerSesion();
 
       this.conn?.close();
       this.conn = null;

@@ -1,9 +1,11 @@
 /**
- * «Crear vault nuevo…» — el alta completa ocurre en el plugin: nombre, cuenta y password
- * de cifrado se eligen acá; el material se genera LOCALMENTE y el servidor solo recibe el
- * material público (salt, wrap, pubkey, uuid). La recovery key se muestra UNA vez.
+ * «Crear vault nuevo…» y «Vincular…» — ambas operaciones viven en la SESIÓN de cuenta:
+ * las credenciales de cuenta NO se piden acá (ya entraste una vez en Ajustes → Cuenta);
+ * lo único que se pide es la password de CIFRADO del vault (al crear: la inventás vos;
+ * al vincular: la del vault que ya existe).
  *
- * Es el cierre del círculo: cuenta en la web → vault desde Obsidian → sync.
+ * El material se genera LOCALMENTE y el servidor solo recibe el material público (salt,
+ * wrap, pubkey, uuid). La recovery key se muestra UNA vez.
  */
 
 import { Modal, Notice, Setting, type App } from 'obsidian';
@@ -11,10 +13,7 @@ import { Modal, Notice, Setting, type App } from 'obsidian';
 import type PluginOvaultd from './main';
 
 class ModalDeCreacion extends Modal {
-  private serverUrl: string;
-  private email = '';
   private nombre = '';
-  private passwordCuenta = '';
   private passwordVault = '';
   private confirmar = '';
   private creando = false;
@@ -22,17 +21,9 @@ class ModalDeCreacion extends Modal {
 
   constructor(
     app: App,
-    serverUrlInicial: string,
-    private readonly alCrear: (datos: {
-      serverUrl: string;
-      email: string;
-      passwordCuenta: string;
-      nombre: string;
-      passwordVault: string;
-    }) => Promise<void>,
+    private readonly alCrear: (datos: { nombre: string; passwordVault: string }) => Promise<void>,
   ) {
     super(app);
-    this.serverUrl = serverUrlInicial;
   }
 
   onOpen(): void {
@@ -44,24 +35,6 @@ class ModalDeCreacion extends Modal {
         'recuperar). Guardala en tu gestor de contraseñas antes de seguir.',
     });
 
-    new Setting(this.contentEl).setName('Servidor').addText((texto) =>
-      texto
-        .setValue(this.serverUrl)
-        .onChange((valor) => {
-          this.serverUrl = valor;
-        }),
-    );
-    new Setting(this.contentEl).setName('Email de la cuenta').addText((texto) =>
-      texto.onChange((valor) => {
-        this.email = valor;
-      }),
-    );
-    new Setting(this.contentEl).setName('Password de la cuenta').addText((texto) => {
-      texto.inputEl.type = 'password';
-      texto.onChange((valor) => {
-        this.passwordCuenta = valor;
-      });
-    });
     new Setting(this.contentEl).setName('Nombre del vault').addText((texto) =>
       texto.onChange((valor) => {
         this.nombre = valor;
@@ -95,7 +68,10 @@ class ModalDeCreacion extends Modal {
     );
   }
 
-  private async crear(boton: { setDisabled: (valor: boolean) => unknown; setButtonText: (texto: string) => unknown }): Promise<void> {
+  private async crear(boton: {
+    setDisabled: (valor: boolean) => unknown;
+    setButtonText: (texto: string) => unknown;
+  }): Promise<void> {
     if (this.creando) return;
     if (this.aviso) this.aviso.setText('');
 
@@ -103,9 +79,6 @@ class ModalDeCreacion extends Modal {
       if (this.aviso) this.aviso.setText(mensaje);
     };
 
-    if (this.serverUrl.trim() === '') return error('Falta el servidor.');
-    if (!this.email.includes('@')) return error('Ese email no parece válido.');
-    if (this.passwordCuenta.length < 8) return error('La password de la cuenta necesita 8+ caracteres.');
     if (this.nombre.trim() === '') return error('Poné un nombre para el vault.');
     if (this.passwordVault.length < 8) return error('La password del vault necesita 8+ caracteres.');
     if (this.passwordVault !== this.confirmar) return error('Las passwords no coinciden.');
@@ -114,19 +87,88 @@ class ModalDeCreacion extends Modal {
     boton.setDisabled(true);
     boton.setButtonText('Creando…');
     try {
-      await this.alCrear({
-        serverUrl: this.serverUrl,
-        email: this.email.trim(),
-        passwordCuenta: this.passwordCuenta,
-        nombre: this.nombre.trim(),
-        passwordVault: this.passwordVault,
-      });
+      await this.alCrear({ nombre: this.nombre.trim(), passwordVault: this.passwordVault });
       this.close();
     } catch (elegido) {
       this.creando = false;
       boton.setDisabled(false);
       boton.setButtonText('Crear vault');
       error(`No se pudo crear: ${elegido instanceof Error ? elegido.message : String(elegido)}`);
+    }
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
+
+/** Vínculo de un vault de la cuenta a esta carpeta: solo pide su password de cifrado. */
+export class ModalDeVincular extends Modal {
+  private passwordVault = '';
+  private vinculando = false;
+  private aviso: HTMLElement | null = null;
+
+  constructor(
+    private readonly plugin: PluginOvaultd,
+    private readonly vault: { id: number; name: string },
+    private readonly alVincular: (passwordVault: string) => Promise<void>,
+  ) {
+    super(plugin.app);
+  }
+
+  onOpen(): void {
+    this.contentEl.createEl('h2', { text: `Vincular «${this.vault.name}» (#${this.vault.id})` });
+    this.contentEl.createEl('p', {
+      text:
+        'La password de cifrado descifra el material del vault LOCALMENTE (KEK → unwrap): ' +
+        'el servidor nunca la ve. Con esto esta carpeta queda vinculada y empieza el sync.',
+    });
+
+    new Setting(this.contentEl)
+      .setName('Password de cifrado del vault')
+      .addText((texto) => {
+        texto.inputEl.type = 'password';
+        texto.onChange((valor) => {
+          this.passwordVault = valor;
+        });
+      });
+
+    this.aviso = this.contentEl.createEl('p', { cls: 'mod-warning' });
+
+    new Setting(this.contentEl).addButton((boton) =>
+      boton
+        .setButtonText('Vincular')
+        .setCta()
+        .onClick(() => {
+          void this.vincular(boton);
+        }),
+    );
+  }
+
+  private async vincular(boton: {
+    setDisabled: (valor: boolean) => unknown;
+    setButtonText: (texto: string) => unknown;
+  }): Promise<void> {
+    if (this.vinculando) return;
+    if (this.passwordVault.length === 0) {
+      if (this.aviso) this.aviso.setText('Falta la password del vault.');
+      return;
+    }
+    this.vinculando = true;
+    boton.setDisabled(true);
+    boton.setButtonText('Vinculando…');
+    try {
+      await this.alVincular(this.passwordVault);
+      this.close();
+    } catch (elegido) {
+      this.vinculando = false;
+      boton.setDisabled(false);
+      boton.setButtonText('Vincular');
+      if (this.aviso) {
+        this.aviso.setText(
+          `No se pudo vincular: ${elegido instanceof Error ? elegido.message : String(elegido)}`,
+        );
+      }
     }
   }
 
@@ -174,6 +216,10 @@ class ModalDeRecovery extends Modal {
 
 /** Comando de paleta/opciones: alta completa de un vault desde esta carpeta. */
 export async function comandoCrearVault(plugin: PluginOvaultd): Promise<void> {
+  if (plugin.cuentaConectada === null) {
+    new Notice('ovaultd: entrá con tu cuenta primero (Ajustes → Cuenta).', 8_000);
+    return;
+  }
   if (plugin.motor.vinculado) {
     new Notice(
       'ovaultd: esta carpeta ya está vinculada a un vault. Desvinculá primero para crear otro.',
@@ -182,7 +228,7 @@ export async function comandoCrearVault(plugin: PluginOvaultd): Promise<void> {
     return;
   }
 
-  new ModalDeCreacion(plugin.app, plugin.ajustes.serverUrl, async (datos) => {
+  new ModalDeCreacion(plugin.app, async (datos) => {
     const { id, recoveryHex } = await plugin.motor.crearVault(datos);
     new Notice(`ovaultd: vault #${id} creado y vinculado. Sincronizando…`, 8_000);
     new ModalDeRecovery(plugin.app, { id, nombre: datos.nombre, recoveryHex }).open();
