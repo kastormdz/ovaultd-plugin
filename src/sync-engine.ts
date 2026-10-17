@@ -20,6 +20,13 @@
 import type { App } from 'obsidian';
 
 import {
+  cabeceraCliente,
+  evaluarCompatibilidad,
+  type MetaDelServer,
+  type Veredicto,
+} from './compat';
+
+import {
   StateStore,
   SyncConnection,
   correrCiclo,
@@ -159,11 +166,15 @@ export class MotorDeSync {
   private timerPendiente: number | null = null;
   private iniciando = false;
 
+  /** Veredicto de `/meta` (ADR-0018). Se consulta una vez por sesión, no por ciclo. */
+  private compat: Veredicto | null = null;
+
   estado: EstadoDelMotor = { fase: 'apagado', detalle: 'sin vincular', ultimaSync: null, ultimoReporte: null };
 
   constructor(
     private readonly app: App,
     private readonly avisar: (estado: EstadoDelMotor) => void,
+    private readonly versionPropia: string,
   ) {}
 
   // ------------------------------------------------------------------ estado local
@@ -256,12 +267,38 @@ export class MotorDeSync {
     });
   }
 
+  /**
+   * Consulta `/api/v1/meta` y decide si este plugin puede trabajar contra el server
+   * (ADR-0018). Se cachea por sesión (`forzar` para re-consultar, p. ej. tras entrar con
+   * otra cuenta). Lanza solo si no hay sesión o si el server no contesta: un veredicto
+   * negativo vuelve en `ok: false` con el mensaje ya redactado.
+   */
+  async compatibilidad(forzar = false): Promise<Veredicto> {
+    if (this.compat !== null && !forzar) return this.compat;
+    const sesion = await this.leerSesion();
+    if (sesion === null) throw new Error('primero entrá con tu cuenta (Ajustes → Cuenta)');
+
+    const respuesta = await fetch(`${sesion.serverUrl}/api/v1/meta`, {
+      headers: { ...cabeceraCliente(this.versionPropia) },
+      cache: 'no-store',
+    });
+    if (!respuesta.ok) {
+      throw new Error(`GET /api/v1/meta → HTTP ${respuesta.status}: ${await respuesta.text()}`);
+    }
+    const veredicto = evaluarCompatibilidad(
+      this.versionPropia,
+      (await respuesta.json()) as MetaDelServer,
+    );
+    this.compat = veredicto;
+    return veredicto;
+  }
+
   /** Pedido sin parseo de body (los 204 y los PUT de material no traen JSON útil). */
   private async pedirRaw(
     ruta: string,
     opciones: { metodo?: string; token?: string; cuerpo?: unknown } = {},
   ): Promise<Response> {
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = { ...cabeceraCliente(this.versionPropia) };
     if (opciones.token !== undefined) headers.authorization = `Bearer ${opciones.token}`;
     if (opciones.cuerpo !== undefined) headers['content-type'] = 'application/json';
 
@@ -481,7 +518,7 @@ export class MotorDeSync {
     ruta: string,
     opciones: { metodo?: string; token?: string; cuerpo?: unknown } = {},
   ): Promise<T> {
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = { ...cabeceraCliente(this.versionPropia) };
     if (opciones.token !== undefined) headers.authorization = `Bearer ${opciones.token}`;
     if (opciones.cuerpo !== undefined) headers['content-type'] = 'application/json';
 
@@ -503,6 +540,12 @@ export class MotorDeSync {
   async vincular(opciones: { numeroVault: number; passwordVault: string }): Promise<string> {
     const sesion = await this.leerSesion();
     if (sesion === null) throw new Error('primero entrá con tu cuenta (Ajustes → Cuenta)');
+
+    // Compatibilidad ANTES de tocar nada (ADR-0018): si el plugin quedó viejo lo dice acá,
+    // con el mensaje del veredicto, y no se escribe un solo byte.
+    const compat = await this.compatibilidad();
+    if (!compat.ok) throw new Error(compat.bloqueo ?? 'este plugin no es compatible con el server');
+
     const base = sesion.serverUrl;
     this.fijarEstado('sincronizando', 'vinculando…');
 
@@ -567,6 +610,11 @@ export class MotorDeSync {
   }): Promise<{ id: number; recoveryHex: string }> {
     const sesion = await this.leerSesion();
     if (sesion === null) throw new Error('primero entrá con tu cuenta (Ajustes → Cuenta)');
+
+    // Mismo criterio que al vincular: sin compatibilidad no se crea nada en el server.
+    const compat = await this.compatibilidad();
+    if (!compat.ok) throw new Error(compat.bloqueo ?? 'este plugin no es compatible con el server');
+
     const base = sesion.serverUrl;
     this.fijarEstado('sincronizando', 'creando vault…');
 
@@ -635,6 +683,15 @@ export class MotorDeSync {
       }
       this.estadoLocal = local;
       await this.leerSesion();
+
+      // Compatibilidad (ADR-0018): un plugin viejo contra un server nuevo no sincroniza
+      // nada. Se corta acá, antes de abrir el índice y la conexión.
+      const compat = await this.compatibilidad();
+      if (!compat.ok) {
+        this.fijarEstado('error', compat.bloqueo ?? 'este plugin no es compatible con el server');
+        return;
+      }
+      if (compat.aviso !== null) await this.registrarEnLog('apagado', compat.aviso);
 
       this.conn?.close();
       this.conn = null;

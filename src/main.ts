@@ -1,6 +1,7 @@
 import { Notice, Plugin } from 'obsidian';
 
 import { AdaptadorDeArchivos, PuenteDeEventos, type CambioDeVault } from './ObsidianFileAdapter';
+import { cabeceraCliente, evaluarCompatibilidad, type MetaDelServer } from './compat';
 import { comandoExportar, comandoImportar, procesarPedidosDeE2E } from './ExportImport';
 import { comandoResolver, procesarPedidoDeResolucion } from './Resolver';
 import { comandoCrearVault } from './CrearVault';
@@ -45,7 +46,11 @@ export default class PluginOvaultd extends Plugin {
     this.estadoEl.setText('ovaultd: sin vincular');
 
     this.adaptador = new AdaptadorDeArchivos(this.app.vault.adapter);
-    this.motor = new MotorDeSync(this.app, (estado) => this.mostrarEstadoDelMotor(estado));
+    this.motor = new MotorDeSync(
+      this.app,
+      (estado) => this.mostrarEstadoDelMotor(estado),
+      this.manifest.version,
+    );
 
     this.puente = new PuenteDeEventos(this.app.vault, {
       onCambio: (cambio) => this.alCambiar(cambio),
@@ -326,14 +331,35 @@ export default class PluginOvaultd extends Plugin {
     }
 
     try {
-      const respuesta = await fetch(`${base}/healthz`, { cache: 'no-store' });
+      const cabeceras = { ...cabeceraCliente(this.manifest.version) };
+      const respuesta = await fetch(`${base}/healthz`, { headers: cabeceras, cache: 'no-store' });
       const cuerpo = (await respuesta.json()) as { status?: string };
 
-      if (respuesta.ok && cuerpo.status === 'ok') {
-        new Notice('ovaultd: el servidor responde.');
-      } else {
+      if (!respuesta.ok || cuerpo.status !== 'ok') {
         new Notice(`ovaultd: respuesta inesperada (${respuesta.status})`);
+        return;
       }
+
+      // Además de «responde», el veredicto de compatibilidad (ADR-0018): es justo lo que
+      // hace falta saber ANTES de vincular.
+      const meta = await fetch(`${base}/api/v1/meta`, { headers: cabeceras, cache: 'no-store' });
+      if (!meta.ok) {
+        new Notice(`ovaultd: el servidor responde, pero /meta devolvió ${meta.status}.`);
+        return;
+      }
+      const veredicto = evaluarCompatibilidad(
+        this.manifest.version,
+        (await meta.json()) as MetaDelServer,
+      );
+      if (!veredicto.ok) {
+        new Notice(`ovaultd: ${veredicto.bloqueo}`);
+        return;
+      }
+      new Notice(
+        veredicto.aviso !== null
+          ? `ovaultd: servidor OK · ${veredicto.aviso}`
+          : `ovaultd: servidor OK y compatible (plugin ${this.manifest.version}).`,
+      );
     } catch (error) {
       new Notice(`ovaultd: no pude hablar con el servidor — ${String(error)}`);
     }

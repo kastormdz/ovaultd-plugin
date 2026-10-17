@@ -65,6 +65,7 @@ function mockVaultEnMemoria() {
   let ultimaEnvuelta: string | null = null;
 
   const responder = (url: string): Response | null => {
+    if (url.endsWith('/api/v1/meta')) return json({ server_version: '0.2.0', api: 'v1', wire_protocol: 'v2', min_plugin_version: '0.2.0', features: ['meta'] });
     if (url.endsWith('/api/v1/auth/signin')) return json({ token: 'tk-1', device_id: 7 });
     if (url.endsWith('/api/v1/vaults')) {
       const ultimo = pedidos[pedidos.length - 1];
@@ -117,12 +118,13 @@ describe('crear vault desde el plugin', () => {
     const { app, archivos } = appFake();
     vi.spyOn(MotorDeSync.prototype, 'iniciar').mockResolvedValue();
     mockearFetch((url) => {
+      if (url.endsWith('/api/v1/meta')) return json({ server_version: '0.2.0', api: 'v1', wire_protocol: 'v2', min_plugin_version: '0.2.0', features: ['meta'] });
       if (url.endsWith('/api/v1/auth/signin')) return json({ token: 'tk-1', device_id: 7 });
       if (url.endsWith('/api/v1/vaults')) return json({ id: 42 });
       return null;
     });
 
-    const motor = new MotorDeSync(app as never, () => undefined);
+    const motor = new MotorDeSync(app as never, () => undefined, '0.2.0');
     await motor.entrar({
       serverUrl: 'http://127.0.0.1:8894',
       email: 'quien@ejemplo.com',
@@ -180,6 +182,7 @@ describe('crear vault desde el plugin', () => {
     const { app, archivos } = appFake();
     vi.spyOn(MotorDeSync.prototype, 'iniciar').mockResolvedValue();
     mockearFetch((url) => {
+      if (url.endsWith('/api/v1/meta')) return json({ server_version: '0.2.0', api: 'v1', wire_protocol: 'v2', min_plugin_version: '0.2.0', features: ['meta'] });
       if (url.endsWith('/api/v1/auth/signin')) {
         return json({ error: 'credenciales inválidas' }, 403);
       }
@@ -187,7 +190,7 @@ describe('crear vault desde el plugin', () => {
       return null;
     });
 
-    const motor = new MotorDeSync(app as never, () => undefined);
+    const motor = new MotorDeSync(app as never, () => undefined, '0.2.0');
     await expect(
       motor.entrar({
         serverUrl: 'http://127.0.0.1:8894',
@@ -210,12 +213,13 @@ describe('crear vault desde el plugin', () => {
     const { app, archivos } = appFake();
     vi.spyOn(MotorDeSync.prototype, 'iniciar').mockResolvedValue();
     mockearFetch((url) => {
+      if (url.endsWith('/api/v1/meta')) return json({ server_version: '0.2.0', api: 'v1', wire_protocol: 'v2', min_plugin_version: '0.2.0', features: ['meta'] });
       if (url.endsWith('/api/v1/auth/signin')) return json({ token: 'tk-1', device_id: 7 });
       if (url.endsWith('/api/v1/vaults')) return json({ id: 42 });
       return null;
     });
 
-    const motor = new MotorDeSync(app as never, () => undefined);
+    const motor = new MotorDeSync(app as never, () => undefined, '0.2.0');
     await motor.entrar({
       serverUrl: 'http://127.0.0.1:8894',
       email: 'quien@ejemplo.com',
@@ -244,7 +248,7 @@ describe('crear vault desde el plugin', () => {
     const vault = mockVaultEnMemoria();
     mockearFetch(vault.responder);
 
-    const motor = new MotorDeSync(app as never, () => undefined);
+    const motor = new MotorDeSync(app as never, () => undefined, '0.2.0');
     await motor.entrar({
       serverUrl: 'http://127.0.0.1:8894',
       email: 'quien@ejemplo.com',
@@ -299,7 +303,7 @@ describe('crear vault desde el plugin', () => {
     const vault = mockVaultEnMemoria();
     mockearFetch(vault.responder);
 
-    const motor = new MotorDeSync(app as never, () => undefined);
+    const motor = new MotorDeSync(app as never, () => undefined, '0.2.0');
     await motor.entrar({
       serverUrl: 'http://127.0.0.1:8894',
       email: 'quien@ejemplo.com',
@@ -341,7 +345,7 @@ describe('crear vault desde el plugin', () => {
     const vault = mockVaultEnMemoria();
     mockearFetch(vault.responder);
 
-    const motor = new MotorDeSync(app as never, () => undefined);
+    const motor = new MotorDeSync(app as never, () => undefined, '0.2.0');
     await motor.entrar({
       serverUrl: 'http://127.0.0.1:8894',
       email: 'quien@ejemplo.com',

@@ -19,6 +19,16 @@ The server, the shared libraries (`@ovaultd/protocol`, `@ovaultd/crypto`, `@ovau
 
 Your vault password is stretched into a KEK, which unwraps the vault key; from those, per-content keys and signing keys are derived. Changed files are encrypted and uploaded as opaque blobs; the server stores them with signed revision records chained by `expected_rev`. Pulling is a delta since your last known revision; pushing signs every operation. If someone else edited ahead of you, you get a conflict instead of a lost edit.
 
+## Compatibility
+
+The plugin travels on a **release train** with the server: the same `MAJOR.MINOR` on both sides is a pair that was tested together (patches are independent).
+
+| Server | Plugin | Wire |
+|---|---|---|
+| `0.2.x` | `0.2.x` | `v2` |
+
+Before linking anything, the plugin asks the server `GET /api/v1/meta` and checks that contract: if the server requires a newer plugin than this one, it refuses to link and says so (with a message pointing at the plugin); if this plugin is a train ahead, it warns once and goes on. It also identifies itself on every request with `x-ovaultd-client: oVaultd-plugin/<version>`, so the server's logs show which client is talking.
+
 ## Requirements
 
 - An **ovaultd server** ([main repository](https://github.com/kastormdz/ovaultd)) — a single container, published on loopback, behind your own reverse proxy.
