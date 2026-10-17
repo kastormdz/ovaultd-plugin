@@ -29,7 +29,7 @@ The bundle keeps `obsidian`/`electron` external and **fails the build** if any N
 
 ## Usage
 
-Settings → **Self-hosted Sync**:
+Settings → **oVaultd Plugin**:
 
 | Field | What it is |
 |---|---|
