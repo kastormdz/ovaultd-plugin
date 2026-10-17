@@ -29,6 +29,12 @@ The plugin travels on a **release train** with the server: the same `MAJOR.MINOR
 
 Before linking anything, the plugin asks the server `GET /api/v1/meta` and checks that contract: if the server requires a newer plugin than this one, it refuses to link and says so (with a message pointing at the plugin); if this plugin is a train ahead, it warns once and goes on. It also identifies itself on every request with `x-ovaultd-client: oVaultd-plugin/<version>`, so the server's logs show which client is talking.
 
+## Releases
+
+Releases are cut by tag: `plugin-vX.Y.Z` builds the plugin with the very same anti-Node build used in development, and attaches `ovaultd-plugin-X.Y.Z.zip` — with `main.js`, `manifest.json` and `styles.css` — to the GitHub Release. That is the layout BRAT and the community directory expect: one release per version, with the binaries attached.
+
+Unpack the zip into `<vault>/.obsidian/plugins/ovaultd/`, or point BRAT at this repository. What changed in each version lives in [CHANGELOG.md](CHANGELOG.md), and the release notes are taken from there.
+
 ## Requirements
 
 - An **ovaultd server** ([main repository](https://github.com/kastormdz/ovaultd)) — a single container, published on loopback, behind your own reverse proxy.

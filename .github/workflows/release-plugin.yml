@@ -1,0 +1,75 @@
+name: release-plugin
+
+# Un tag `plugin-vX.Y.Z` publica la release del plugin (ADR-0018): el zip con
+# `main.js` + `manifest.json` + `styles.css`, que es lo que consumen BRAT y la tienda de
+# Obsidian (un release por versión, con los binarios adjuntos).
+on:
+  push:
+    tags: ['plugin-v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # El plugin importa `@ovaultd/core|crypto|protocol` por `file:../ovaultd/packages/*`:
+      # sin el monorepo al lado, `npm ci` no resuelve nada. Se clona y se construye primero
+      # (el plugin consume los `dist/`, no las fuentes).
+      - uses: actions/checkout@v4
+        with:
+          repository: kastormdz/ovaultd
+          path: ../ovaultd
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Preflight (tag ↔ manifest ↔ package.json)
+        run: bash scripts/preflight-release.sh "$GITHUB_REF_NAME"
+
+      - name: Construir el monorepo (los dist del núcleo)
+        working-directory: ../ovaultd
+        run: |
+          npm ci
+          npm run build
+
+      - name: Instalar, testear y construir el plugin
+        run: |
+          npm ci
+          npm test
+          # El build incluye la puerta anti-Node: si se filtra un builtin, falla acá.
+          npm run build
+
+      - name: Empaquetar el zip de release
+        run: |
+          vers="${GITHUB_REF_NAME#plugin-v}"
+          zip -j "ovaultd-plugin-$vers.zip" main.js manifest.json styles.css
+          unzip -l "ovaultd-plugin-$vers.zip"
+          # Las notas salen del CHANGELOG (misma convención que el server).
+          awk -v v="$vers" '
+            $0 ~ "^## \\[" v "\\]" { dentro = 1 }
+            dentro && /^## \[/ && $0 !~ "^## \\[" v "\\]" { exit }
+            dentro { print }
+          ' CHANGELOG.md > notas-release.md
+          if [ ! -s notas-release.md ]; then
+            echo "✗ el CHANGELOG no tiene una sección para $vers" >&2
+            exit 1
+          fi
+
+      - name: Publicar la GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          vers="${GITHUB_REF_NAME#plugin-v}"
+          gh release create "plugin-v$vers" \
+            --repo "${{ github.repository }}" \
+            --title "oVaultd Plugin v$vers" \
+            --notes-file notas-release.md \
+            --verify-tag \
+            "ovaultd-plugin-$vers.zip"
+          echo "── release publicada ──"
+          gh release view "plugin-v$vers" --repo "${{ github.repository }}"
