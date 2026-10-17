@@ -296,7 +296,12 @@ export class MotorDeSync {
     });
     const elegido = vaults.find((vault) => vault.id === opciones.numeroVault);
     if (!elegido) {
-      const lista = vaults.map((vault) => `#${vault.id} «${vault.name}»`).join(', ') || '(ninguno)';
+      if (vaults.length === 0) {
+        throw new Error(
+          'tu cuenta todavía no tiene ningún vault: creá el primero con «Crear un vault nuevo…»',
+        );
+      }
+      const lista = vaults.map((vault) => `#${vault.id} «${vault.name}»`).join(', ');
       throw new Error(`el vault #${opciones.numeroVault} no está en la cuenta. Disponibles: ${lista}`);
     }
 

@@ -46,14 +46,13 @@ class ModalDeCreacion extends Modal {
 
     new Setting(this.contentEl).setName('Servidor').addText((texto) =>
       texto
-        .setPlaceholder('https://sync.tudominio.com')
         .setValue(this.serverUrl)
         .onChange((valor) => {
           this.serverUrl = valor;
         }),
     );
     new Setting(this.contentEl).setName('Email de la cuenta').addText((texto) =>
-      texto.setPlaceholder('vos@ejemplo.com').onChange((valor) => {
+      texto.onChange((valor) => {
         this.email = valor;
       }),
     );
@@ -64,7 +63,7 @@ class ModalDeCreacion extends Modal {
       });
     });
     new Setting(this.contentEl).setName('Nombre del vault').addText((texto) =>
-      texto.setPlaceholder('Mi vault').onChange((valor) => {
+      texto.onChange((valor) => {
         this.nombre = valor;
       }),
     );

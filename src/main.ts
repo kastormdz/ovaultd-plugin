@@ -216,14 +216,14 @@ export default class PluginOvaultd extends Plugin {
     passwordCuenta: string;
     numero: number;
     passwordVault: string;
-  }): Promise<void> {
+  }): Promise<boolean> {
     if (!opciones.serverUrl || !opciones.email || !opciones.passwordCuenta || !opciones.passwordVault) {
       new Notice('ovaultd: completá servidor, email y las dos passwords.');
-      return;
+      return false;
     }
     if (!Number.isInteger(opciones.numero) || opciones.numero <= 0) {
       new Notice('ovaultd: el número de vault tiene que ser un entero positivo (ej. 1).');
-      return;
+      return false;
     }
 
     new Notice('ovaultd: vinculando (derivación de clave local, puede tardar)…');
@@ -236,8 +236,10 @@ export default class PluginOvaultd extends Plugin {
         passwordVault: opciones.passwordVault,
       });
       new Notice(`ovaultd: ${mensaje}`);
+      return true;
     } catch (error) {
       new Notice(`ovaultd: no pude vincular — ${String(error)}`, 10_000);
+      return false;
     }
   }
 

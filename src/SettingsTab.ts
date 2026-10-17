@@ -133,7 +133,6 @@ export class TabAjustes extends PluginSettingTab {
       .setDesc('URL base de tu servidor ovaultd (ej. https://sync.midominio.com).')
       .addText((texto) =>
         texto
-          .setPlaceholder('https://…')
           .setValue(this.plugin.ajustes.serverUrl)
           .onChange(async (valor) => {
             this.plugin.ajustes.serverUrl = valor.trim();
@@ -146,7 +145,6 @@ export class TabAjustes extends PluginSettingTab {
       .setDesc('La cuenta del servidor (la crea el admin con ovaultd-admin, o el bootstrap /setup).')
       .addText((texto) =>
         texto
-          .setPlaceholder('vos@ejemplo.com')
           .setValue(this.plugin.ajustes.email)
           .onChange(async (valor) => {
             this.plugin.ajustes.email = valor.trim();
@@ -159,7 +157,6 @@ export class TabAjustes extends PluginSettingTab {
       .setDesc('Para el login de este device. Solo vive en este formulario: no se guarda.')
       .addText((texto) => {
         texto.inputEl.type = 'password';
-        texto.setPlaceholder('••••••••');
         texto.onChange((valor) => {
           this.passwordCuenta = valor;
         });
@@ -170,7 +167,6 @@ export class TabAjustes extends PluginSettingTab {
       .setDesc('El # del vault EXISTENTE a vincular (los vaults nuevos se crean con «Crear un vault nuevo», arriba).')
       .addText((texto) =>
         texto
-          .setPlaceholder('1')
           .setValue(this.plugin.ajustes.vaultNumero)
           .onChange(async (valor) => {
             this.plugin.ajustes.vaultNumero = valor.trim();
@@ -186,7 +182,6 @@ export class TabAjustes extends PluginSettingTab {
       )
       .addText((texto) => {
         texto.inputEl.type = 'password';
-        texto.setPlaceholder('••••••••');
         texto.onChange((valor) => {
           this.passwordVault = valor;
         });
@@ -204,16 +199,19 @@ export class TabAjustes extends PluginSettingTab {
           .setButtonText(vinculado ? 'Re-vincular' : 'Vincular')
           .setCta()
           .onClick(async () => {
-            await this.plugin.vincularVault({
+            const vinculo = await this.plugin.vincularVault({
               serverUrl: this.plugin.ajustes.serverUrl,
               email: this.plugin.ajustes.email,
               passwordCuenta: this.passwordCuenta,
               numero: Number.parseInt(this.plugin.ajustes.vaultNumero, 10),
               passwordVault: this.passwordVault,
             });
-            this.passwordCuenta = '';
-            this.passwordVault = '';
-            this.display();
+            // Solo con ÉXITO se limpia y se redibuja: un fallo deja TODO lo escrito intacto.
+            if (vinculo) {
+              this.passwordCuenta = '';
+              this.passwordVault = '';
+              this.display();
+            }
           }),
       );
   }
