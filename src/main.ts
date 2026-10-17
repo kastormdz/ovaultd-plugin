@@ -2,6 +2,7 @@ import { Notice, Plugin } from 'obsidian';
 
 import { AdaptadorDeArchivos, PuenteDeEventos, type CambioDeVault } from './ObsidianFileAdapter';
 import { comandoExportar, comandoImportar, procesarPedidosDeE2E } from './ExportImport';
+import { comandoResolver, procesarPedidoDeResolucion } from './Resolver';
 import { AjustesDeOvaultd, AJUSTES_POR_DEFECTO, TabAjustes } from './SettingsTab';
 import { RegistroDeSpike } from './spikeEventos';
 import { MotorDeSync, type EstadoDelMotor } from './sync-engine';
@@ -94,6 +95,14 @@ export default class PluginOvaultd extends Plugin {
     });
 
     this.addCommand({
+      id: 'resolver-conflicto',
+      name: 'Resolver conflicto de sincronización…',
+      callback: () => {
+        void comandoResolver(this);
+      },
+    });
+
+    this.addCommand({
       id: 'motor-estado',
       name: 'Estado del motor',
       callback: () => {
@@ -145,6 +154,11 @@ export default class PluginOvaultd extends Plugin {
     // Pedidos de export/import dejados junto al plugin (disparo sin UI para el E2E).
     void procesarPedidosDeE2E(this).catch((error) => {
       console.error('ovaultd: los pedidos de E2E fallaron', error);
+    });
+
+    // Pedido de resolución de conflicto (mismo mecanismo, para el E2E de la fase 5).
+    void procesarPedidoDeResolucion(this).catch((error) => {
+      console.error('ovaultd: el pedido de resolución falló', error);
     });
 
     if (this.ajustes.serverUrl !== '') {

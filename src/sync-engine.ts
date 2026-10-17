@@ -24,7 +24,10 @@ import {
   SyncConnection,
   correrCiclo,
   recoverApplies,
+  resolverBloqueado,
+  type EleccionDeResolucion,
   type FileSystemPort,
+  type IntentEntry,
   type SyncCycleReport,
 } from '@ovaultd/core';
 import { deriveKek, deriveSubkeys, unwrapKeyPw, type KdfParams, type SubKeys } from '@ovaultd/crypto';
@@ -165,6 +168,31 @@ export class MotorDeSync {
     });
     await conn.open({ since: 0 });
     return conn;
+  }
+
+  // ------------------------------------------------------------------ resolución de conflictos
+
+  /** Las intenciones bloqueadas (conflictos pendientes), para la UI de resolución. */
+  async conflictosPendientes(): Promise<IntentEntry[]> {
+    if (this.store === null) return [];
+    return this.store.listIntents('blocked');
+  }
+
+  /**
+   * Resuelve un conflicto bloqueado con la elección del usuario y agenda un ciclo: el
+   * pull retoma desde el checkpoint y todo lo que estaba encolado fluye.
+   */
+  async resolver(intentId: string, eleccion: EleccionDeResolucion): Promise<void> {
+    const { store, port, keys, conn } = this;
+    if (store === null || port === null || keys === null || conn === null) {
+      throw new Error('el motor no está iniciado (¿vinculaste el vault?)');
+    }
+
+    const intent = await store.getIntent(intentId);
+    if (intent === null) throw new Error('ese conflicto ya no existe');
+
+    await resolverBloqueado({ store, port, keys }, intent, eleccion, conn);
+    this.marcarSucio(250);
   }
 
   // ------------------------------------------------------------------ vinculación
