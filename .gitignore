@@ -1,0 +1,6 @@
+# build outputs (los releases los llevan; el repo no)
+node_modules/
+main.js
+
+# ruido
+.DS_Store
