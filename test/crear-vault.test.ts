@@ -14,12 +14,13 @@ import { MotorDeSync, type EstadoLocalDelPlugin } from '../src/sync-engine';
 const RUTA_ESTADO = '.obsidian/plugins/ovaultd/estado-local.json';
 const RUTA_SESION = '.obsidian/plugins/ovaultd/sesion-cuenta.json';
 
-function appFake() {
+function appFake(configDir = '.obsidian') {
   const archivos = new Map<string, string>();
   return {
     archivos,
     app: {
       vault: {
+        configDir,
         adapter: {
           async read(ruta: string) {
             const contenido = archivos.get(ruta);
@@ -359,5 +360,39 @@ describe('crear vault desde el plugin', () => {
     const borrado = pedidos.find((p) => p.init?.method === 'DELETE');
     expect(borrado?.url).toContain('confirm=Mi%20vault');
     expect(motor.vinculado).toBe(false);
+  });
+
+  it('escribe el estado en el configDir del vault, no en un .obsidian fijo', async () => {
+    // El configDir lo elige el usuario: con `.obsidian` hardcodeado, el estado, la sesión
+    // y el log terminan en una carpeta que no es la del vault.
+    const { app, archivos } = appFake('.mi-config');
+    vi.spyOn(MotorDeSync.prototype, 'iniciar').mockResolvedValue();
+    mockearFetch((url) => {
+      if (url.endsWith('/api/v1/meta')) {
+        return json({
+          server_version: '0.2.0',
+          api: 'v1',
+          wire_protocol: 'v2',
+          min_plugin_version: '0.2.0',
+          features: ['meta'],
+        });
+      }
+      if (url.endsWith('/api/v1/auth/signin')) return json({ token: 'tk-1', device_id: 7 });
+      if (url.endsWith('/api/v1/vaults')) return json({ id: 42 });
+      return null;
+    });
+
+    const motor = new MotorDeSync(app as never, () => undefined, '0.2.0');
+    await motor.entrar({
+      serverUrl: 'http://127.0.0.1:8894',
+      email: 'quien@ejemplo.com',
+      passwordCuenta: 'password-de-prueba',
+    });
+    await motor.crearVault({ nombre: 'Mi vault', passwordVault: 'password-de-prueba' });
+
+    const escritas = [...archivos.keys()];
+    expect(escritas).toContain('.mi-config/plugins/ovaultd/estado-local.json');
+    expect(escritas).toContain('.mi-config/plugins/ovaultd/sesion-cuenta.json');
+    expect(escritas.some((ruta) => ruta.startsWith('.obsidian/'))).toBe(false);
   });
 });

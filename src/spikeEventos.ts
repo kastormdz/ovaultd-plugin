@@ -18,10 +18,11 @@ import { toHex } from '@ovaultd/protocol';
 import type { DataAdapter, EventRef, TAbstractFile, Vault } from 'obsidian';
 
 import type { CambioDeVault } from './ObsidianFileAdapter';
+import { carpetaDelPlugin } from './rutas';
 
-const DIR_PLUGIN = '.obsidian/plugins/ovaultd';
-const RUTA_LOG = `${DIR_PLUGIN}/spike.jsonl`;
-const RUTA_MARCADOR = `${DIR_PLUGIN}/spike.activo`;
+/** Archivos del spike, dentro de la carpeta del plugin (que depende del configDir). */
+const ARCHIVO_LOG = 'spike.jsonl';
+const ARCHIVO_MARCADOR = 'spike.activo';
 const CADENCIA_VOLCADO_MS = 1200;
 const RETARDOS_SONDA_MS = [0, 80, 300];
 const MAX_BYTES_SONDA = 2 * 1024 * 1024;
@@ -48,8 +49,14 @@ export class RegistroDeSpike {
     private readonly datos: DataAdapter,
   ) {}
 
-  static async marcadorActivo(datos: DataAdapter): Promise<boolean> {
-    return datos.exists(RUTA_MARCADOR).catch(() => false);
+  private get dir(): string {
+    return carpetaDelPlugin(this.vault.configDir);
+  }
+
+  static async marcadorActivo(datos: DataAdapter, configDir: string): Promise<boolean> {
+    return datos
+      .exists(`${carpetaDelPlugin(configDir)}/${ARCHIVO_MARCADOR}`)
+      .catch(() => false);
   }
 
   iniciar(): void {
@@ -86,7 +93,7 @@ export class RegistroDeSpike {
   private crudo(tipo: string, archivo: TAbstractFile, oldPath?: string): void {
     if (!this.activo) return;
 
-    if (archivo.path.startsWith(`${DIR_PLUGIN}/`)) {
+    if (archivo.path.startsWith(`${this.dir}/`)) {
       // ¿El configDir emite? Se cuentan; registrarlos sería un bucle (el log vive acá).
       this.autoEventos += 1;
       return;
@@ -150,7 +157,7 @@ export class RegistroDeSpike {
 
     const lineas = this.buffer.splice(0, this.buffer.length).map((o) => JSON.stringify(o));
     try {
-      await this.datos.append(RUTA_LOG, `${lineas.join('\n')}\n`);
+      await this.datos.append(`${this.dir}/${ARCHIVO_LOG}`, `${lineas.join('\n')}\n`);
     } catch (error) {
       console.error('ovaultd: spike no pudo escribir el log', error);
     }

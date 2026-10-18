@@ -24,10 +24,7 @@ import { fsDesktop } from './fsDesktop';
 import type PluginOvaultd from './main';
 import { debeImportar } from './rutasDeImport';
 
-const RUTA_PEDIDO_EXPORT = '.obsidian/plugins/ovaultd/export-pedido.json';
-const RUTA_RESULTADO_EXPORT = '.obsidian/plugins/ovaultd/export-resultado.json';
-const RUTA_PEDIDO_IMPORT = '.obsidian/plugins/ovaultd/import-pedido.json';
-const RUTA_RESULTADO_IMPORT = '.obsidian/plugins/ovaultd/import-resultado.json';
+import { dirDelPlugin } from './rutas';
 
 export interface ResultadoExportUI {
   ok: true;
@@ -81,7 +78,7 @@ export async function ejecutarExport(
       puerto,
       omitirExistentes: !sobrescribir,
       onProgreso: (hechos, total) => {
-        aviso.noticeEl.setText(`ovaultd: exportando… ${hechos}/${total}`);
+        aviso.messageEl.setText(`ovaultd: exportando… ${hechos}/${total}`);
       },
     });
 
@@ -138,9 +135,9 @@ export async function ejecutarImport(
 
       await crearPadres(adapter, rel);
       const bytes = fsd.fs.readFileSync(fsd.path.join(raiz, rel));
-      await adapter.writeBinary(rel, bytes.slice().buffer as ArrayBuffer);
+      await adapter.writeBinary(rel, bytes.slice().buffer);
       importados += 1;
-      aviso.noticeEl.setText(`ovaultd: importando… ${importados + saltados}/${archivos.length}`);
+      aviso.messageEl.setText(`ovaultd: importando… ${importados + saltados}/${archivos.length}`);
     }
   } finally {
     aviso.hide();
@@ -292,11 +289,20 @@ export function comandoImportar(plugin: PluginOvaultd): void {
 
 /** Procesa `export-pedido.json` / `import-pedido.json` si existen (disparo sin UI). */
 export async function procesarPedidosDeE2E(plugin: PluginOvaultd): Promise<void> {
-  await procesarPedido(plugin, RUTA_PEDIDO_EXPORT, RUTA_RESULTADO_EXPORT, (pedido) =>
-    ejecutarExport(plugin, String(pedido['ruta'] ?? ''), pedido['sobrescribir'] === true),
+  // Rutas derivadas del configDir del vault (no siempre `.obsidian`).
+  const dir = dirDelPlugin(plugin.app);
+  await procesarPedido(
+    plugin,
+    `${dir}/export-pedido.json`,
+    `${dir}/export-resultado.json`,
+    (pedido) =>
+      ejecutarExport(plugin, String(pedido['ruta'] ?? ''), pedido['sobrescribir'] === true),
   );
-  await procesarPedido(plugin, RUTA_PEDIDO_IMPORT, RUTA_RESULTADO_IMPORT, (pedido) =>
-    ejecutarImport(plugin, String(pedido['ruta'] ?? '')),
+  await procesarPedido(
+    plugin,
+    `${dir}/import-pedido.json`,
+    `${dir}/import-resultado.json`,
+    (pedido) => ejecutarImport(plugin, String(pedido['ruta'] ?? '')),
   );
 }
 

@@ -20,8 +20,7 @@ import type { IntentEntry } from '@ovaultd/core';
 
 import type PluginOvaultd from './main';
 
-const RUTA_PEDIDO_RESOLVER = '.obsidian/plugins/ovaultd/resolver-pedido.json';
-const RUTA_RESULTADO_RESOLVER = '.obsidian/plugins/ovaultd/resolver-resultado.json';
+import { dirDelPlugin } from './rutas';
 
 class ModalDeConflicto extends Modal {
   constructor(
@@ -114,15 +113,18 @@ export async function comandoResolver(plugin: PluginOvaultd): Promise<void> {
 /** Pedido sin UI (E2E): resuelve el primer conflicto con la `eleccion` indicada. */
 export async function procesarPedidoDeResolucion(plugin: PluginOvaultd): Promise<void> {
   const adapter = plugin.app.vault.adapter;
+  const dir = dirDelPlugin(plugin.app);
+  const rutaPedido = `${dir}/resolver-pedido.json`;
+  const rutaResultado = `${dir}/resolver-resultado.json`;
 
   let crudo: string;
   try {
-    crudo = await adapter.read(RUTA_PEDIDO_RESOLVER);
+    crudo = await adapter.read(rutaPedido);
   } catch {
     return; // sin pedido: nada que hacer
   }
 
-  await adapter.remove(RUTA_PEDIDO_RESOLVER).catch(() => undefined);
+  await adapter.remove(rutaPedido).catch(() => undefined);
 
   let resultado: Record<string, unknown>;
   try {
@@ -154,7 +156,7 @@ export async function procesarPedidoDeResolucion(plugin: PluginOvaultd): Promise
   }
 
   await adapter
-    .write(RUTA_RESULTADO_RESOLVER, `${JSON.stringify(resultado, null, 2)}\n`)
+    .write(rutaResultado, `${JSON.stringify(resultado, null, 2)}\n`)
     .catch(() => undefined);
   new Notice('ovaultd: pedido E2E de resolución procesado');
 }

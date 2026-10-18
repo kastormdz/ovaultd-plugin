@@ -6,6 +6,20 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 (mismo `MAJOR.MINOR` = pareja probada junta; ver ADR-0018 y la sección «Compatibility» del
 README).
 
+## [0.2.2] — 2026-10-18
+
+Correcciones que salieron de la revisión automática del directorio de la comunidad.
+
+### Fixed
+
+- **El `configDir` del vault es configurable** y las rutas internas ahora se derivan de él
+  (estado local, sesión, log y los pedidos E2E sin UI). Antes asumían `.obsidian`: en un vault
+  con la configuración en otra carpeta, el plugin escribía su estado donde no correspondía.
+- Los títulos de las secciones de ajustes usan `setHeading()` del API, no elementos HTML.
+- Los avisos de progreso usan `messageEl` en vez del `noticeEl` deprecado.
+- Timers y listeners usan la ventana del renderer (con caída a `globalThis` fuera de
+  Obsidian) para convivir con las ventanas emergentes.
+
 ## [0.2.1] — 2026-10-18
 
 ### Fixed

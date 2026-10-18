@@ -88,7 +88,7 @@ export class TabAjustes extends PluginSettingTab {
       );
 
     // ---------------------------------------------------------------- cuenta
-    containerEl.createEl('h3', { text: 'Cuenta' });
+    new Setting(containerEl).setName('Cuenta').setHeading();
 
     if (sesion) {
       new Setting(containerEl)
@@ -156,7 +156,7 @@ export class TabAjustes extends PluginSettingTab {
 
     // ---------------------------------------------------------------- vaults
     if (sesion) {
-      containerEl.createEl('h3', { text: 'Vaults de tu cuenta' });
+      new Setting(containerEl).setName('Vaults de tu cuenta').setHeading();
 
       new Setting(containerEl)
         .setName('Crear un vault nuevo')
@@ -175,7 +175,7 @@ export class TabAjustes extends PluginSettingTab {
 
     // ---------------------------------------------------------------- carpeta
     if (vinculado) {
-      containerEl.createEl('h3', { text: 'Esta carpeta' });
+      new Setting(containerEl).setName('Esta carpeta').setHeading();
       new Setting(containerEl)
         .setName('Carpeta vinculada')
         .setDesc(
@@ -206,7 +206,7 @@ export class TabAjustes extends PluginSettingTab {
     }
 
     // ---------------------------------------------------------------- export / import
-    containerEl.createEl('h3', { text: 'Export / Import' });
+    new Setting(containerEl).setName('Export / Import').setHeading();
 
     new Setting(containerEl)
       .setName('Exportar el vault a una carpeta')

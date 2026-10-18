@@ -25,6 +25,8 @@ import {
   type MetaDelServer,
   type Veredicto,
 } from './compat';
+import { ventana } from './entorno';
+import { dirDelPlugin } from './rutas';
 
 import {
   StateStore,
@@ -66,9 +68,6 @@ import {
 
 import { AdaptadorDeArchivos } from './ObsidianFileAdapter';
 
-const RUTA_ESTADO_LOCAL = '.obsidian/plugins/ovaultd/estado-local.json';
-const RUTA_SESION = '.obsidian/plugins/ovaultd/sesion-cuenta.json';
-const RUTA_LOG_MOTOR = '.obsidian/plugins/ovaultd/motor.log';
 /** Nombre de la base IndexedDB del índice durable del motor. */
 const DB_INDICE = 'plugin';
 const LOG_MAX_BYTES = 64 * 1024;
@@ -139,7 +138,7 @@ const subclavesDeHex = (hex: SubclavesEnHex): SubKeys =>
     meta: fromHex(hex.meta),
     bind: fromHex(hex.bind),
     sign: fromHex(hex.sign),
-  }) as unknown as SubKeys;
+  });
 
 /** Borra la DB del índice del motor; inofensivo fuera del renderer (tests). */
 function borrarIndiceDurable(): Promise<void> {
@@ -177,11 +176,26 @@ export class MotorDeSync {
     private readonly versionPropia: string,
   ) {}
 
+  // ------------------------------------------------------------------ rutas locales
+
+  /** El `configDir` lo elige el usuario: las rutas se derivan de él, nunca de `.obsidian`. */
+  private get rutaEstado(): string {
+    return `${dirDelPlugin(this.app)}/estado-local.json`;
+  }
+
+  private get rutaSesion(): string {
+    return `${dirDelPlugin(this.app)}/sesion-cuenta.json`;
+  }
+
+  private get rutaLog(): string {
+    return `${dirDelPlugin(this.app)}/motor.log`;
+  }
+
   // ------------------------------------------------------------------ estado local
 
   async leerEstadoLocal(): Promise<EstadoLocalDelPlugin | null> {
     try {
-      const crudo = await this.app.vault.adapter.read(RUTA_ESTADO_LOCAL);
+      const crudo = await this.app.vault.adapter.read(this.rutaEstado);
       return JSON.parse(crudo) as EstadoLocalDelPlugin;
     } catch {
       return null;
@@ -189,7 +203,7 @@ export class MotorDeSync {
   }
 
   private async guardarEstadoLocal(estado: EstadoLocalDelPlugin): Promise<void> {
-    await this.app.vault.adapter.write(RUTA_ESTADO_LOCAL, `${JSON.stringify(estado, null, 2)}\n`);
+    await this.app.vault.adapter.write(this.rutaEstado, `${JSON.stringify(estado, null, 2)}\n`);
   }
 
   // ------------------------------------------------------------------ sesión de cuenta
@@ -197,7 +211,7 @@ export class MotorDeSync {
   async leerSesion(): Promise<SesionDeCuenta | null> {
     if (this.sesion !== null) return this.sesion;
     try {
-      const crudo = await this.app.vault.adapter.read(RUTA_SESION);
+      const crudo = await this.app.vault.adapter.read(this.rutaSesion);
       this.sesion = JSON.parse(crudo) as SesionDeCuenta;
       return this.sesion;
     } catch {
@@ -218,7 +232,7 @@ export class MotorDeSync {
 
   private async guardarSesion(sesion: SesionDeCuenta): Promise<void> {
     this.sesion = sesion;
-    await this.app.vault.adapter.write(RUTA_SESION, `${JSON.stringify(sesion, null, 2)}\n`);
+    await this.app.vault.adapter.write(this.rutaSesion, `${JSON.stringify(sesion, null, 2)}\n`);
   }
 
   get cuentaConectada(): SesionDeCuenta | null {
@@ -255,7 +269,7 @@ export class MotorDeSync {
 
   async salir(): Promise<void> {
     this.sesion = null;
-    await this.app.vault.adapter.remove(RUTA_SESION).catch(() => undefined);
+    await this.app.vault.adapter.remove(this.rutaSesion).catch(() => undefined);
   }
 
   /** Los vaults de la cuenta (con la sesión): lista para vincular/crear/borrar. */
@@ -737,7 +751,7 @@ export class MotorDeSync {
 
   async detener(): Promise<void> {
     if (this.timerPendiente !== null) {
-      globalThis.clearTimeout(this.timerPendiente);
+      ventana.clearTimeout(this.timerPendiente);
       this.timerPendiente = null;
     }
     this.conn?.close();
@@ -759,7 +773,7 @@ export class MotorDeSync {
   async desvincular(): Promise<void> {
     await this.detener();
     this.estadoLocal = null;
-    await this.app.vault.adapter.remove(RUTA_ESTADO_LOCAL).catch(() => undefined);
+    await this.app.vault.adapter.remove(this.rutaEstado).catch(() => undefined);
     await borrarIndiceDurable();
     this.fijarEstado('apagado', 'sin vincular');
   }
@@ -770,8 +784,8 @@ export class MotorDeSync {
   marcarSucio(demoraMs = DEBOUNCE_MS): void {
     if (this.conn === null) return;
     this.sucio = true;
-    if (this.timerPendiente !== null) globalThis.clearTimeout(this.timerPendiente);
-    this.timerPendiente = globalThis.setTimeout(() => {
+    if (this.timerPendiente !== null) ventana.clearTimeout(this.timerPendiente);
+    this.timerPendiente = ventana.setTimeout(() => {
       this.timerPendiente = null;
       void this.correrCicloSeguro();
     }, demoraMs);
@@ -851,12 +865,12 @@ export class MotorDeSync {
       const linea = `${new Date().toISOString()} ${fase} — ${detalle}\n`;
       let previo = '';
       try {
-        previo = await this.app.vault.adapter.read(RUTA_LOG_MOTOR);
+        previo = await this.app.vault.adapter.read(this.rutaLog);
       } catch {
         /* todavía no existe */
       }
       if (previo.length > LOG_MAX_BYTES) previo = previo.slice(-LOG_MAX_BYTES / 2);
-      await this.app.vault.adapter.write(RUTA_LOG_MOTOR, previo + linea);
+      await this.app.vault.adapter.write(this.rutaLog, previo + linea);
     } catch {
       /* el log jamás rompe el motor */
     }

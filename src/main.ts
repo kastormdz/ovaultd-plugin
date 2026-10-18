@@ -2,6 +2,7 @@ import { Notice, Plugin } from 'obsidian';
 
 import { AdaptadorDeArchivos, PuenteDeEventos, type CambioDeVault } from './ObsidianFileAdapter';
 import { cabeceraCliente, evaluarCompatibilidad, type MetaDelServer } from './compat';
+import { carpetaDelPlugin } from './rutas';
 import { comandoExportar, comandoImportar, procesarPedidosDeE2E } from './ExportImport';
 import { comandoResolver, procesarPedidoDeResolucion } from './Resolver';
 import { comandoCrearVault } from './CrearVault';
@@ -156,7 +157,7 @@ export default class PluginOvaultd extends Plugin {
     });
 
     // El spike se auto-activa si el marcador está junto al plugin (para medir sin UI).
-    if (await RegistroDeSpike.marcadorActivo(this.app.vault.adapter)) {
+    if (await RegistroDeSpike.marcadorActivo(this.app.vault.adapter, this.app.vault.configDir)) {
       await this.iniciarSpike();
     }
 
@@ -300,18 +301,18 @@ export default class PluginOvaultd extends Plugin {
     if (this.spike !== null) return;
     this.spike = new RegistroDeSpike(this.app.vault, this.app.vault.adapter);
     this.spike.iniciar();
-    const dir = this.manifest.dir ?? '.obsidian/plugins/ovaultd';
+    const dir = this.manifest.dir ?? carpetaDelPlugin(this.app.vault.configDir);
     await this.app.vault.adapter
       .append(`${dir}/spike.activo`, `${new Date().toISOString()}\n`)
       .catch(() => undefined);
-    new Notice('ovaultd: spike de eventos ACTIVO (log en .obsidian/plugins/ovaultd/spike.jsonl)');
+    new Notice(`ovaultd: spike de eventos ACTIVO (log en ${dir}/spike.jsonl)`);
   }
 
   async detenerSpike(): Promise<void> {
     if (this.spike === null) return;
     this.spike.detener();
     this.spike = null;
-    const dir = this.manifest.dir ?? '.obsidian/plugins/ovaultd';
+    const dir = this.manifest.dir ?? carpetaDelPlugin(this.app.vault.configDir);
     await this.app.vault.adapter.remove(`${dir}/spike.activo`).catch(() => undefined);
     new Notice('ovaultd: spike de eventos detenido');
   }
