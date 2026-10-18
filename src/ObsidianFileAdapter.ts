@@ -95,11 +95,20 @@ export class AdaptadorDeArchivos implements FileSystemPort {
     // revisión sobre un archivo que ya existe (writeTemp → rename), tira "Destination file
     // already exists". El rename de POSIX (el del NodeFileAdapter del CLI) sí pisa, así que el
     // núcleo nunca notó la diferencia — y bajar un cambio moría el ciclo entero.
+    //
+    // Borrar el destino antes de renombrar tampoco sirve: ese hueco (remove + rename) le llega
+    // al watcher como delete + create, y Obsidian desvincula la pestaña ABIERTA de la nota —
+    // "desaparece" de la vista y hay que volver a buscarla. El camino correcto es un modify:
+    // el contenido del temporal se escribe SOBRE el destino, la vista abierta se refresca en
+    // vivo y el destino nunca deja de existir. La durabilidad no depende de este paso: el
+    // journal del núcleo re-aplica desde el temporal verificado si algo se corta.
     if (desde !== hacia && (await this.datos.exists(hacia))) {
-      await this.datos.remove(hacia);
+      const bytes = await this.datos.readBinary(desde);
+      await this.datos.writeBinary(hacia, bytes);
+      await this.datos.remove(desde);
+    } else {
+      await this.datos.rename(desde, hacia);
     }
-
-    await this.datos.rename(desde, hacia);
 
     // Nuestro publish: el temporal pasa a ser el destino con hash conocido.
     const hash = this.temporales.get(desde);

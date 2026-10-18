@@ -6,6 +6,17 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 (mismo `MAJOR.MINOR` = pareja probada junta; ver ADR-0018 y la sección «Compatibility» del
 README).
 
+## [0.2.12] — 2026-10-18
+
+### Fixed
+
+- **La nota abierta ya no "desaparece" cuando llega un cambio desde otro dispositivo.** Al
+  aplicar una revisión sobre un archivo existente, el motor ahora escribe el contenido nuevo
+  ENCIMA (un modify común) en lugar de borrarlo y recrearlo. Obsidian veía ese borrado como
+  "el archivo se fue" y desvinculaba la pestaña abierta: la nota se cerraba y había que volver
+  a buscarla, como si fuera una nota nueva con el mismo nombre. Con esto la vista abierta se
+  refresca en vivo, igual que con el cliente oficial.
+
 ## [0.2.11] — 2026-10-18
 
 ### Added

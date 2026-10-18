@@ -40,12 +40,14 @@ class FakeDataAdapter {
   }
 
   async readBinary(p: string): Promise<ArrayBuffer> {
+    this.llamadas.push(`read:${p}`);
     const archivo = this.archivos.get(p);
     if (archivo === undefined) throw new Error(`ENOENT: ${p}`);
     return archivo.slice().buffer;
   }
 
   async writeBinary(p: string, datos: ArrayBuffer): Promise<void> {
+    this.llamadas.push(`write:${p}`);
     this.archivos.set(p, new Uint8Array(datos.slice(0)));
   }
 
@@ -54,10 +56,12 @@ class FakeDataAdapter {
   }
 
   async remove(p: string): Promise<void> {
+    this.llamadas.push(`remove:${p}`);
     if (!this.archivos.delete(p)) throw new Error(`ENOENT: ${p}`);
   }
 
   async rename(desde: string, hacia: string): Promise<void> {
+    this.llamadas.push(`rename:${desde}->${hacia}`);
     const archivo = this.archivos.get(desde);
     if (archivo === undefined) throw new Error(`ENOENT: ${desde}`);
     // FIEL al adapter de Obsidian: NO pisa el destino (tira este mismo error). El rename de
@@ -190,5 +194,26 @@ describe('AdaptadorDeArchivos (contrato del puerto)', () => {
 
     expect(new TextDecoder().decode(fake.archivos.get('Notas/uno.md'))).toBe('nuevo');
     expect(fake.archivos.has('Notas/uno.md.tmp')).toBe(false);
+  });
+
+  it('aplicar sobre un archivo existente NO lo borra: la vista abierta no se desvincula', async () => {
+    // El síntoma real: con la nota abierta, reemplazarla con remove + rename le llega al
+    // watcher como delete + create y Obsidian desvincula la pestaña — la nota "desaparece" y
+    // hay que volver a buscarla. Este test ancla el camino nuevo: un modify puro (write sobre
+    // el destino), sin que el destino deje de existir en ningún momento.
+    const fake = new FakeDataAdapter();
+    fake.archivos.set('Notas/uno.md', bytes('viejo'));
+    fake.archivos.set('Notas/uno.md.tmp', bytes('nuevo'));
+
+    const adaptador = new AdaptadorDeArchivos(comoAdapter(fake));
+    await adaptador.rename('Notas/uno.md.tmp', 'Notas/uno.md');
+
+    // Las operaciones SOBRE EL DESTINO (el temporal no cuenta): nunca un remove.
+    const sobreElDestino = fake.llamadas.filter(
+      (l) => l.includes('Notas/uno.md') && !l.includes('.tmp'),
+    );
+    expect(sobreElDestino.some((l) => l.startsWith('remove:'))).toBe(false);
+    expect(sobreElDestino.some((l) => l.startsWith('write:'))).toBe(true);
+    expect(new TextDecoder().decode(fake.archivos.get('Notas/uno.md'))).toBe('nuevo');
   });
 });
