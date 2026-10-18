@@ -6,6 +6,17 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 (mismo `MAJOR.MINOR` = pareja probada junta; ver ADR-0018 y la sección «Compatibility» del
 README).
 
+## [0.2.6] — 2026-10-18
+
+### Fixed
+
+- **Un archivo vacío ya no rompe la sincronización.** El contenido de un archivo de 0 bytes se
+  codifica como cadena vacía, y el outbox lo comparaba por truthiness: lo tomaba por "sin
+  contenido", lanzaba un error y **abortaba el ciclo completo**. En un vault real con 188 notas
+  más un `.md` en blanco, el servidor quedaba con 0 revisiones y el motor repetía el mismo error
+  en cada ciclo; el archivo vacío tampoco materializaba su snapshot. Las tres comparaciones van
+  ahora contra `null`/`undefined`, y hay tests que cubren el caso.
+
 ## [0.2.5] — 2026-10-18
 
 ### Added
