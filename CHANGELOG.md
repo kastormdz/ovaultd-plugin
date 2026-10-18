@@ -6,6 +6,23 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 (mismo `MAJOR.MINOR` = pareja probada junta; ver ADR-0018 y la sección «Compatibility» del
 README).
 
+## [0.2.5] — 2026-10-18
+
+### Added
+
+- **El plugin ya se puede instalar en móvil** (Android e iOS). `isDesktopOnly` estaba en
+  `true` sin necesidad: la única pieza atada al escritorio es el export/import al sistema de
+  archivos, que ya estaba guardada por `Platform.isDesktopApp` y en móvil avisa y no hace nada.
+  Verificado antes de sacarlo: el bundle no tiene un solo `require('node:*)`, las dependencias
+  vendorizadas no tocan Node, no hay lookbehind en expresiones regulares y `indexedDB` ya estaba
+  guardado.
+
+### Fixed
+
+- La barra de estado se pinta a través de un helper que tolera su ausencia: `addStatusBarItem()`
+  está documentado como no disponible en móvil, así que el elemento puede ser `null` y ahora el
+  plugin no depende de él (el estado sigue visible en los ajustes).
+
 ## [0.2.4] — 2026-10-18
 
 ### Fixed

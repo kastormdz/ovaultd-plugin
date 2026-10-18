@@ -28,7 +28,8 @@ export default class PluginOvaultd extends Plugin {
   motor!: MotorDeSync;
 
   private spike: RegistroDeSpike | null = null;
-  private estadoEl!: HTMLElement;
+  /** Barra de estado. En móvil `addStatusBarItem()` no está disponible: puede venir null. */
+  private estadoEl: HTMLElement | null = null;
   private contadorCambios = 0;
   private ultimoAviso = 0;
 
@@ -44,7 +45,7 @@ export default class PluginOvaultd extends Plugin {
     await this.cargarAjustes();
 
     this.estadoEl = this.addStatusBarItem();
-    this.estadoEl.setText('ovaultd: sin vincular');
+    this.pintarEstado('ovaultd: sin vincular');
 
     this.adaptador = new AdaptadorDeArchivos(this.app.vault.adapter);
     this.motor = new MotorDeSync(
@@ -201,8 +202,19 @@ export default class PluginOvaultd extends Plugin {
       estado.fase === 'al-dia'
         ? `ovaultd: al día${estado.detalle === 'sin cambios' ? '' : ` · ${estado.detalle}`}`
         : `ovaultd: ${estado.fase === 'con-conflictos' ? '⚠ conflictos' : estado.fase}`;
+    this.pintarEstado(texto, estado.detalle);
+  }
+
+  /**
+   * Pinta el estado en la barra de estado. En móvil no hay barra: `addStatusBarItem()` está
+   * documentado como no disponible ahí, así que el elemento puede ser null y no se pinta nada
+   * (el estado sigue visible en los ajustes del plugin).
+   */
+  private pintarEstado(texto: string, detalle?: string): void {
+    // Chequeo falsy a propósito: en móvil puede faltar el elemento y no siempre es `null`.
+    if (!this.estadoEl) return;
     this.estadoEl.setText(texto);
-    this.estadoEl.setAttribute('title', estado.detalle);
+    this.estadoEl.setAttribute('title', detalle ?? '');
   }
 
   private alCambiar(cambio: CambioDeVault): void {
