@@ -6,6 +6,20 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 (mismo `MAJOR.MINOR` = pareja probada junta; ver ADR-0018 y la sección «Compatibility» del
 README).
 
+## [0.2.10] — 2026-10-18
+
+### Added
+
+- **Los cambios del otro dispositivo llegan solos.** Cuando alguien commitea en el mismo vault, el
+  server avisa a las demás conexiones y el motor adelanta el ciclo en vez de esperar al próximo
+  cambio local: antes, con Obsidian abierto, la bajada quedaba pendiente hasta que algo local
+  disparara un ciclo. El aviso es una señal —el ciclo que dispara es el de siempre, un pull con el
+  `since` del checkpoint— así que un aviso perdido no pierde ningún dato. Requiere el server 0.2.1
+  o posterior (el que emite el aviso).
+- **Rescate cada 30 s.** Un ciclo periódico como red de seguridad: en el teléfono el WebSocket se
+  duerme con la app en segundo plano y ahí el aviso no llega. No es el mecanismo principal, es el
+  piso: sin avisos, dos dispositivos convergen en «a lo sumo 30 segundos».
+
 ## [0.2.9] — 2026-10-18
 
 ### Fixed

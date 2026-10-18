@@ -79,6 +79,16 @@ const LOG_MAX_BYTES = 64 * 1024;
 const DEBOUNCE_MS = 1500;
 const ASENTAMIENTO_MS = 3000;
 
+/**
+ * El rescate: un ciclo cada 30 s aunque no pase nada. Es la red de seguridad del aviso en vivo —
+ * en el teléfono el WebSocket se duerme con la app en segundo plano, y ahí el aviso se pierde.
+ * El plan del server lo llama «polling de rescate» y no es el mecanismo principal.
+ */
+const RESCATE_MS = 30_000;
+
+/** Respiro tras un aviso del server: corto (se siente vivo) pero agrupando ráfagas. */
+const AVISO_MS = 250;
+
 export interface SubclavesEnHex {
   content: string;
   nonce: string;
@@ -168,6 +178,7 @@ export class MotorDeSync {
   private corriendo = false;
   private sucio = false;
   private timerPendiente: number | null = null;
+  private timerRescate: number | null = null;
   private iniciando = false;
 
   /** Veredicto de `/meta` (ADR-0018). Se consulta una vez por sesión, no por ciclo. */
@@ -739,6 +750,11 @@ export class MotorDeSync {
 
       // Asentamiento: un ciclo tras el arranque (el puente puede haber perdido eventos).
       this.marcarSucio(ASENTAMIENTO_MS);
+
+      // Rescate: un ciclo cada 30 s aunque no llegue ningún aviso.
+      if (this.timerRescate === null) {
+        this.timerRescate = ventana.setInterval(() => this.marcarSucio(ASENTAMIENTO_MS), RESCATE_MS);
+      }
     } catch (error) {
       this.fijarEstado('error', `no pude iniciar el motor: ${String(error)}`);
       throw error;
@@ -751,6 +767,10 @@ export class MotorDeSync {
     if (this.timerPendiente !== null) {
       ventana.clearTimeout(this.timerPendiente);
       this.timerPendiente = null;
+    }
+    if (this.timerRescate !== null) {
+      ventana.clearInterval(this.timerRescate);
+      this.timerRescate = null;
     }
     this.conn?.close();
     this.conn = null;
@@ -817,6 +837,9 @@ export class MotorDeSync {
       vault: local.vault.numero,
       device: local.cuenta.deviceId,
       keys: this.keys,
+      // El aviso del server: hay revisiones nuevas. Es una señal, así que lo único que hace es
+      // adelantar el ciclo — el pull con el `since` del checkpoint es el que trae los datos.
+      alRecibirAviso: () => this.marcarSucio(AVISO_MS),
     });
     const checkpoint = await this.store.readCheckpoint().catch(() => null);
     await conn.open({ since: checkpoint?.since ?? 0 });

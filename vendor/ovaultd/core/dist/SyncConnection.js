@@ -176,6 +176,8 @@ export class SyncConnection {
             this.notificaciones.push(mensaje);
             if (this.notificaciones.length > 100)
                 this.notificaciones.shift();
+            if (tipo === 'notify')
+                this.opciones.alRecibirAviso?.();
             return;
         }
         const espera = this.espera;
