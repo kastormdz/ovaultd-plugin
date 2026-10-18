@@ -86,6 +86,9 @@ const ASENTAMIENTO_MS = 3000;
  */
 const RESCATE_MS = 30_000;
 
+/** Reintento del arranque tras un fallo: mismo perfil de tráfico que el rescate. */
+const REINTENTO_ARRANQUE_MS = 30_000;
+
 /** Respiro tras un aviso del server: corto (se siente vivo) pero agrupando ráfagas. */
 const AVISO_MS = 250;
 
@@ -180,6 +183,10 @@ export class MotorDeSync {
   private timerPendiente: number | null = null;
   private timerRescate: number | null = null;
   private iniciando = false;
+  /** Reintento del arranque en vuelo (null = no hay). */
+  private timerReintento: number | null = null;
+  /** `detener()` en el medio de una espera: el reintento no puede resucitar el motor. */
+  private detenido = false;
 
   /** Veredicto de `/meta` (ADR-0018). Se consulta una vez por sesión, no por ciclo. */
   private compat: Veredicto | null = null;
@@ -704,6 +711,7 @@ export class MotorDeSync {
   async iniciar(): Promise<void> {
     if (this.iniciando) return;
     this.iniciando = true;
+    this.detenido = false;
     try {
       const local = this.estadoLocal ?? (await this.leerEstadoLocal());
       if (!local) {
@@ -757,10 +765,27 @@ export class MotorDeSync {
       }
     } catch (error) {
       this.fijarEstado('error', `no pude iniciar el motor: ${String(error)}`);
+      // El fallo NO puede dejar el motor muerto hasta un toggle manual: sin timer de
+      // rescate (recién existe con el motor arrancado) nada reintentaba. Se reprograma
+      // solo; cuando la red o el server vuelven, el motor revive sin intervención.
+      this.programarReintentoDeArranque();
       throw error;
     } finally {
       this.iniciando = false;
     }
+  }
+
+  /**
+   * Reprograma un arranque tras un fallo. Indefinido a propósito: es la misma promesa del
+   * rescate (cuando el server vuelve, el motor se recupera solo). `detener()` lo cancela.
+   */
+  private programarReintentoDeArranque(): void {
+    if (this.timerReintento !== null) return;
+    this.timerReintento = ventana.setTimeout(() => {
+      this.timerReintento = null;
+      if (this.detenido) return;
+      void this.iniciar().catch(() => {});
+    }, REINTENTO_ARRANQUE_MS);
   }
 
   async detener(): Promise<void> {
@@ -772,6 +797,12 @@ export class MotorDeSync {
       ventana.clearInterval(this.timerRescate);
       this.timerRescate = null;
     }
+    if (this.timerReintento !== null) {
+      ventana.clearTimeout(this.timerReintento);
+      this.timerReintento = null;
+    }
+    // Un callback del reintento que ya esté en vuelo tampoco puede resucitar el motor.
+    this.detenido = true;
     this.conn?.close();
     this.conn = null;
     this.store?.close();

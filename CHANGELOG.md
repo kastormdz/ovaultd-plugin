@@ -23,6 +23,13 @@ README).
 - El núcleo vendorizado sube a la API de historia (requiere server 0.2.5+ del train):
   `conexionParaExport` pasa a llamarse `conexionAlVuelo` (la usan el export y la historia).
 
+### Fixed
+
+- **Un arranque fallido ya no deja el motor muerto**: si el primer arranque no puede
+  conectarse (red caída al abrir, server reiniciando), el motor reprograma el arranque solo
+  cada 30 s — antes quedaba en «error» hasta apagar y prender el plugin a mano (el timer de
+  rescate recién existe con el motor ya arrancado). `detener()` cancela el reintento.
+
 ## [0.2.14] — 2026-10-18
 
 ### Fixed
