@@ -8,3 +8,6 @@ main.js
 .hotreload
 .tmp/
 notas-release.md
+
+# estado del compilador copiado por error al vendor (ver scripts/sincronizar-core.mjs)
+vendor/**/*.tsbuildinfo

@@ -59,7 +59,12 @@ for (const paquete of paquetes) {
   mkdirSync(copia, { recursive: true });
   cpSync(join(origen, 'package.json'), join(copia, 'package.json'));
   cpSync(join(origen, 'src'), join(copia, 'src'), { recursive: true });
-  cpSync(join(origen, 'dist'), join(copia, 'dist'), { recursive: true });
+  // Los `.tsbuildinfo` son estado del compilador (rutas absolutas de la máquina que compiló):
+  // copiarlos haría que el build en cualquier otro lado siempre diera diff.
+  cpSync(join(origen, 'dist'), join(copia, 'dist'), {
+    recursive: true,
+    filter: (origenArchivo) => !origenArchivo.endsWith('.tsbuildinfo'),
+  });
   for (const extra of ['LICENSE', 'README.md']) {
     if (existsSync(join(origen, extra))) cpSync(join(origen, extra), join(copia, extra));
   }
