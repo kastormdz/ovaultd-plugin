@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { deriveKek, deriveSubkeys, unwrapKeyPw } from '@ovaultd/crypto';
 import { b64Decode, toHex } from '@ovaultd/protocol';
 
-import { MotorDeSync, type EstadoLocalDelPlugin } from '../src/sync-engine';
+import { MotorDeSync, type EstadoLocalDelPlugin, nombreDeIndice } from '../src/sync-engine';
 
 const RUTA_ESTADO = '.obsidian/plugins/ovaultd/estado-local.json';
 const RUTA_SESION = '.obsidian/plugins/ovaultd/sesion-cuenta.json';
@@ -394,5 +394,15 @@ describe('crear vault desde el plugin', () => {
     expect(escritas).toContain('.mi-config/plugins/ovaultd/estado-local.json');
     expect(escritas).toContain('.mi-config/plugins/ovaultd/sesion-cuenta.json');
     expect(escritas.some((ruta) => ruta.startsWith('.obsidian/'))).toBe(false);
+  });
+  it('el índice durable va por vault: dos vaults no comparten IndexedDB', () => {
+    // IndexedDB es por ORIGEN de la app, no por vault. Con un nombre fijo, un vault hereda el
+    // índice del otro y encola con el expectedRev ajeno: el server responde conflicto
+    // (rev 23 contra head 0 — el caso real del primer vault vinculado).
+    const a = nombreDeIndice('uuidDelVaultA');
+    const b = nombreDeIndice('uuidDelVaultB');
+    expect(a).not.toBe(b);
+    expect(nombreDeIndice('uuidDelVaultA')).toBe(a);
+    expect(a).toContain('uuidDelVaultA');
   });
 });

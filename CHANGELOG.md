@@ -6,6 +6,17 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 (mismo `MAJOR.MINOR` = pareja probada junta; ver ADR-0018 y la sección «Compatibility» del
 README).
 
+## [0.2.7] — 2026-10-18
+
+### Fixed
+
+- **El índice local ahora es por vault.** IndexedDB es por ORIGEN de la app, no por vault, y el
+  nombre de la base era fijo: dos vaults del mismo Obsidian compartían el índice. Al vincular un
+  vault nuevo, el motor encolaba con el `expectedRev` del vault anterior y el servidor rechazaba
+  por conflicto (`rev 23, head 0`): el vault recién vinculado no subía nada y encima mostraba
+  "al día". Ahora la base lleva el uuid del vault, y el desvínculo borra la suya (capturando el
+  uuid antes de borrar el estado).
+
 ## [0.2.6] — 2026-10-18
 
 ### Fixed

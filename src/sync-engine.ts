@@ -68,8 +68,13 @@ import {
 
 import { AdaptadorDeArchivos } from './ObsidianFileAdapter';
 
-/** Nombre de la base IndexedDB del índice durable del motor. */
-const DB_INDICE = 'plugin';
+/**
+ * Nombre de la base IndexedDB del índice durable. VA POR VAULT a propósito: IndexedDB es por
+ * ORIGEN de la app, no por vault, así que con un nombre fijo dos vaults del mismo Obsidian
+ * comparten el índice — el motor encolaba con el `expectedRev` del otro vault y el servidor
+ * rechazaba por conflicto (rev 23 contra head 0, visto con el primer vault real).
+ */
+export const nombreDeIndice = (vaultUuidB64: string): string => `ovaultd-indice-${vaultUuidB64}`;
 const LOG_MAX_BYTES = 64 * 1024;
 const DEBOUNCE_MS = 1500;
 const ASENTAMIENTO_MS = 3000;
@@ -141,10 +146,10 @@ const subclavesDeHex = (hex: SubclavesEnHex): SubKeys =>
   });
 
 /** Borra la DB del índice del motor; inofensivo fuera del renderer (tests). */
-function borrarIndiceDurable(): Promise<void> {
+function borrarIndiceDurable(vaultUuidB64: string): Promise<void> {
   if (typeof indexedDB === 'undefined') return Promise.resolve();
   return new Promise((listo) => {
-    const pedido = indexedDB.deleteDatabase(DB_INDICE);
+    const pedido = indexedDB.deleteDatabase(nombreDeIndice(vaultUuidB64));
     pedido.onsuccess = () => listo();
     pedido.onerror = () => listo();
     pedido.onblocked = () => listo(); // una conexión colgada no debe frenar el desvínculo
@@ -712,7 +717,7 @@ export class MotorDeSync {
       this.store?.close();
 
       this.port = new AdaptadorDeArchivos(this.app.vault.adapter);
-      this.store = await StateStore.open(DB_INDICE);
+      this.store = await StateStore.open(nombreDeIndice(local.vault.vaultUuidB64));
       this.keys = subclavesDeHex(local.vault.subclaves);
       this.vaultUuidBytes = b64Decode(local.vault.vaultUuidB64);
 
@@ -772,9 +777,11 @@ export class MotorDeSync {
    */
   async desvincular(): Promise<void> {
     await this.detener();
+    // El nombre del índice va por vault: hay que capturarlo ANTES de borrar el estado local.
+    const vaultUuidB64 = this.estadoLocal?.vault.vaultUuidB64 ?? null;
     this.estadoLocal = null;
     await this.app.vault.adapter.remove(this.rutaEstado).catch(() => undefined);
-    await borrarIndiceDurable();
+    if (vaultUuidB64 !== null) await borrarIndiceDurable(vaultUuidB64);
     this.fijarEstado('apagado', 'sin vincular');
   }
 
