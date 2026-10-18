@@ -60,11 +60,11 @@ npm run build
 npm run install:dev -- --vault "$HOME/path/to/your/vault"
 ```
 
-Then enable it in Obsidian: Settings → Community plugins → **oVaultd Plugin**. (The same three files — `main.js`, `manifest.json`, `styles.css` — can be copied by hand into `<vault>/.obsidian/plugins/ovaultd/`.)
+Then enable it in Obsidian: Settings → Community plugins → **oVaultd Sync**. (The same three files — `main.js`, `manifest.json`, `styles.css` — can be copied by hand into `<vault>/.obsidian/plugins/ovaultd/`.)
 
 ## Usage
 
-Settings → **oVaultd Plugin**:
+Settings → **oVaultd Sync**:
 
 1. **Cuenta** — server URL, account email and account password. This is asked **once**: the session is reused from then on.
 2. **Tus vaults** — every vault on the account, with the actions for each one: link, recover access (with the recovery key), or delete. A new vault is created with **Crear vault nuevo…** (name + a vault password *you invent*; the recovery key is shown exactly once — store it somewhere safe).

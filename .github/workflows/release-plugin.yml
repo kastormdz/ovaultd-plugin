@@ -76,7 +76,7 @@ jobs:
           fi
           gh release create "$vers" \
             --repo "${{ github.repository }}" \
-            --title "oVaultd Plugin v$vers" \
+            --title "oVaultd Sync v$vers" \
             --notes-file notas-release.md \
             --verify-tag \
             main.js manifest.json styles.css

@@ -6,6 +6,13 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 (mismo `MAJOR.MINOR` = pareja probada junta; ver ADR-0018 y la sección «Compatibility» del
 README).
 
+## [0.2.1] — 2026-10-18
+
+### Fixed
+
+- El nombre del manifest pasa a **oVaultd Sync**: el directorio de la comunidad no admite la
+  palabra «Plugin» en el nombre (es redundante ahí). Sin cambios de comportamiento.
+
 ## [0.2.0] — 2026-10-17
 
 Primera release publicada del plugin: sync por eventos, conflictos explícitos y gestión

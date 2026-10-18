@@ -1,7 +1,7 @@
 {
   "id": "ovaultd",
-  "name": "oVaultd Plugin",
-  "version": "0.2.0",
+  "name": "oVaultd Sync",
+  "version": "0.2.1",
   "minAppVersion": "1.5.0",
   "description": "Sync your vault through your own ovaultd server: end-to-end encrypted, revision-based, no third parties.",
   "author": "kastormdz",
