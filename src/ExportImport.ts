@@ -189,9 +189,8 @@ class ModalDeRuta extends Modal {
       texto.onChange((valor) => {
         ruta = valor.trim();
       });
-      texto.inputEl.style.width = '100%';
     });
-    ajuste.settingEl.style.display = 'block';
+    ajuste.settingEl.addClass('ovaultd-campo-vertical');
 
     new Setting(this.contentEl)
       .addButton((boton) => boton.setButtonText('Cancelar').onClick(() => this.close()))

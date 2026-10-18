@@ -202,13 +202,11 @@ export default class PluginOvaultd extends Plugin {
         : `ovaultd: ${estado.fase === 'con-conflictos' ? '⚠ conflictos' : estado.fase}`;
     this.estadoEl.setText(texto);
     this.estadoEl.setAttribute('title', estado.detalle);
-    console.debug('ovaultd: motor', estado.fase, estado.detalle);
   }
 
   private alCambiar(cambio: CambioDeVault): void {
     this.contadorCambios += 1;
     this.spike?.registrarCoalescido(cambio, false);
-    console.debug('ovaultd: cambio de vault', cambio);
     if (cambio.tipo !== 'inicio' && cambio.tipo !== 'reanudado') {
       this.motor.marcarSucio();
     }

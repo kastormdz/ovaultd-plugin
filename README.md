@@ -31,9 +31,18 @@ Before linking anything, the plugin asks the server `GET /api/v1/meta` and check
 
 ## Releases
 
-Releases are cut by tag: `plugin-vX.Y.Z` builds the plugin with the very same anti-Node build used in development, and attaches `ovaultd-plugin-X.Y.Z.zip` — with `main.js`, `manifest.json` and `styles.css` — to the GitHub Release. That is the layout BRAT and the community directory expect: one release per version, with the binaries attached.
+Releases are cut by tag: `X.Y.Z` — exactly the version in `manifest.json`, no prefix, which is what the community directory requires. The GitHub Release carries `main.js`, `manifest.json` and `styles.css` as loose binary assets (signed with a build-provenance attestation), so Obsidian can install it directly, and so can BRAT.
 
-Unpack the zip into `<vault>/.obsidian/plugins/ovaultd/`, or point BRAT at this repository. What changed in each version lives in [CHANGELOG.md](CHANGELOG.md), and the release notes are taken from there.
+Unpack those three files into `<vault>/.obsidian/plugins/ovaultd/`, or point BRAT at this repository. What changed in each version lives in [CHANGELOG.md](CHANGELOG.md), and the release notes are taken from there.
+
+## Disclosures
+
+Following the community directory's [developer policies](https://docs.obsidian.md/community-directory/developer-policies):
+
+- **Network use.** The plugin talks **only** to the server URL you configure in its settings — the ovaultd server that you (or your operator) run. No third-party services, no analytics, no telemetry, no ads.
+- **Account required.** Syncing needs an account **on that server**; the first one is created in the browser at `/setup`. It never leaves your infrastructure.
+- **Files outside the vault.** The export command writes into a folder you pick and the import command reads from one. They only run when you invoke them, and nothing else reaches outside the vault.
+- **Licence.** MIT, source included in this repository.
 
 ## Requirements
 

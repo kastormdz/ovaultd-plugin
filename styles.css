@@ -1,2 +1,19 @@
-/* ovaultd — estilos base. Las vistas (actividad, conflictos) llegan en su corte y
-   heredan las variables de tema de Obsidian (nada de colores propios). */
+/* ovaultd — estilos del plugin.
+   Las guías de Obsidian piden CERO estilos hardcodeados en el código: todo lo que se
+   ajusta vive acá, con clases, y hereda las variables del tema (nada de colores propios). */
+
+/* La recovery key se muestra una vez: que se pueda seleccionar de un tirón. */
+.ovaultd-recovery {
+  user-select: all;
+}
+
+/* Campo de ruta que ocupa el ancho del modal (el label arriba, el input abajo). */
+.ovaultd-campo-vertical {
+  display: block;
+}
+.ovaultd-campo-vertical .setting-item-control {
+  flex: 1 1 auto;
+}
+.ovaultd-campo-vertical input[type='text'] {
+  width: 100%;
+}

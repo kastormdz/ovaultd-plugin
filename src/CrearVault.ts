@@ -199,7 +199,7 @@ class ModalDeRecovery extends Modal {
     });
     const codigo = this.contentEl.createEl('pre');
     codigo.setText(this.datos.recoveryHex);
-    codigo.style.userSelect = 'all';
+    codigo.addClass('ovaultd-recovery');
 
     new Setting(this.contentEl).addButton((boton) =>
       boton.setButtonText('Copiar').onClick(() => {
