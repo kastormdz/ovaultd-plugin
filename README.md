@@ -52,6 +52,12 @@ Following the community directory's [developer policies](https://docs.obsidian.m
 
 ## Install
 
+From the community directory: **oVaultd Sync** — in Obsidian, Settings → Community plugins → Browse → search for it, then Install → Enable.
+
+[![oVaultd Sync in the community directory](https://img.shields.io/badge/Obsidian-community%20directory-7C3AED)](https://community.obsidian.md/plugins/ovaultd)
+
+Or link straight in: [`obsidian://show-plugin?id=ovaultd`](obsidian://show-plugin?id=ovaultd) · [community.obsidian.md/plugins/ovaultd](https://community.obsidian.md/plugins/ovaultd)
+
 Build it and install into a vault:
 
 ```bash
