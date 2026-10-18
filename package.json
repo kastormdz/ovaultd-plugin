@@ -13,7 +13,8 @@
   "dependencies": {
     "@ovaultd/core": "file:./vendor/ovaultd/core",
     "@ovaultd/crypto": "file:./vendor/ovaultd/crypto",
-    "@ovaultd/protocol": "file:./vendor/ovaultd/protocol"
+    "@ovaultd/protocol": "file:./vendor/ovaultd/protocol",
+    "diff-match-patch": "^1.0.5"
   },
   "devDependencies": {
     "esbuild": "0.28.2",
