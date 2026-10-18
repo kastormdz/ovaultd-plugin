@@ -6323,6 +6323,12 @@
   function esConfigPortable(dentroDelConfig) {
     return CONFIG_PORTABLE.some((patron) => patron.test(dentroDelConfig));
   }
+  function esContenedorDeConfig(dentro) {
+    if (dentro === "") return true;
+    if (dentro === "snippets" || dentro === "themes" || dentro === "plugins") return true;
+    const partes = dentro.split("/");
+    return partes.length === 2 && partes[0] === "plugins";
+  }
   function motivoDeExclusion(path, configDir = ".obsidian") {
     const segmentos = path.split("/");
     for (const segmento of segmentos) {
@@ -6339,6 +6345,7 @@
     const i = segmentos.indexOf(configDir);
     if (i !== -1) {
       const dentro = segmentos.slice(i + 1).join("/");
+      if (esContenedorDeConfig(dentro)) return null;
       return esConfigPortable(dentro) ? null : "configuraci\xF3n del vault (fuera de la lista blanca)";
     }
     return null;

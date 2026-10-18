@@ -6,6 +6,19 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 (mismo `MAJOR.MINOR` = pareja probada junta; ver ADR-0018 y la sección «Compatibility» del
 README).
 
+## [0.2.14] — 2026-10-18
+
+### Fixed
+
+- **Los temas (y toda la config portable) ahora cruzan entre dispositivos.** El escaneo del
+  vault salta las carpetas excluidas enteras —no baja a ellas— y la raíz del `configDir`
+  (`.obsidian`) quedaba excluida porque no matchea ningún patrón de la lista blanca: el motor
+  nunca leía adentro, así que `themes/`, `snippets/` y los `manifest.json` de plugins jamás se
+  subían. Ahora los contenedores del `configDir` (la raíz, `snippets`/`themes`/`plugins` y
+  `plugins/<id>`) se recursan y sus archivos se deciden uno a uno: los portables viajan y los
+  vetados (`data.json` de cualquier plugin, `workspace.json`, estado de sesión) siguen afuera.
+  Con esto, cambiar el tema en un dispositivo llega al otro.
+
 ## [0.2.13] — 2026-10-18
 
 ### Added
