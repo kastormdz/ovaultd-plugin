@@ -61,6 +61,11 @@ export declare class SyncConnection {
      * del CAS y se lanza como `SyncConflictError` para que el llamador rebasee.
      */
     commit(batch: BatchWire): Promise<BatchAckWire>;
+    /**
+     * ¿Hay una sesión viva? El socket puede haberse cerrado (se cayó la red, o el server cierra
+     * el WS) mientras este objeto sigue existiendo: preguntar por el objeto no alcanza.
+     */
+    estaAbierta(): boolean;
     close(): void;
     private enviar;
     private esperar;

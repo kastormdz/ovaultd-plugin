@@ -136,6 +136,13 @@ export class SyncConnection {
         }
         return ack;
     }
+    /**
+     * ¿Hay una sesión viva? El socket puede haberse cerrado (se cayó la red, o el server cierra
+     * el WS) mientras este objeto sigue existiendo: preguntar por el objeto no alcanza.
+     */
+    estaAbierta() {
+        return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
+    }
     close() {
         this.ws?.close();
         this.ws = null;

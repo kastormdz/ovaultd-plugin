@@ -728,15 +728,8 @@ export class MotorDeSync {
         keys: this.keys,
       });
 
-      this.conn = new SyncConnection({
-        baseUrl: local.serverUrl,
-        token: local.cuenta.token,
-        vault: local.vault.numero,
-        device: local.cuenta.deviceId,
-        keys: this.keys,
-      });
-      const checkpoint = await this.store.readCheckpoint().catch(() => null);
-      await this.conn.open({ since: checkpoint?.since ?? 0 });
+      this.conn = null;
+      await this.asegurarConexion();
 
       const detalleRecuperacion =
         recuperacion.completed + recuperacion.cleaned + recuperacion.blocked > 0
@@ -803,8 +796,36 @@ export class MotorDeSync {
     return this.correrCicloSeguro();
   }
 
+  /**
+   * Devuelve una conexión VIVA, reabriéndola si el socket murió: el server cierra el WS tras
+   * rechazar una operación, y sin reabrir cada ciclo fallaba con 'sin conexión abierta' hasta
+   * que el usuario recargara el plugin (el objeto `conn` seguía existiendo, así que el chequeo
+   * de null no lo detectaba).
+   */
+  private async asegurarConexion(): Promise<SyncConnection> {
+    if (this.conn !== null && this.conn.estaAbierta()) return this.conn;
+
+    const local = this.estadoLocal;
+    if (local === null || this.keys === null || this.store === null) {
+      throw new Error('no hay vault vinculado');
+    }
+
+    this.conn?.close();
+    const conn = new SyncConnection({
+      baseUrl: local.serverUrl,
+      token: local.cuenta.token,
+      vault: local.vault.numero,
+      device: local.cuenta.deviceId,
+      keys: this.keys,
+    });
+    const checkpoint = await this.store.readCheckpoint().catch(() => null);
+    await conn.open({ since: checkpoint?.since ?? 0 });
+    this.conn = conn;
+    return conn;
+  }
+
   private async correrCicloSeguro(): Promise<SyncCycleReport | null> {
-    if (this.store === null || this.conn === null || this.keys === null || this.port === null) {
+    if (this.store === null || this.keys === null || this.port === null) {
       return null;
     }
     if (this.corriendo) {
@@ -815,6 +836,7 @@ export class MotorDeSync {
     this.corriendo = true;
     this.fijarEstado('sincronizando', 'ciclo en curso');
     try {
+      const conn = await this.asegurarConexion();
       let reporte: SyncCycleReport;
       do {
         this.sucio = false;
@@ -822,7 +844,7 @@ export class MotorDeSync {
           store: this.store,
           port: this.port,
           keys: this.keys,
-          conn: this.conn,
+          conn,
           vaultUuid: this.vaultUuidBytes!,
           epoch: this.estadoLocal?.vault.epoch ?? 1,
         });

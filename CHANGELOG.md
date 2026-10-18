@@ -6,6 +6,16 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 (mismo `MAJOR.MINOR` = pareja probada junta; ver ADR-0018 y la sección «Compatibility» del
 README).
 
+## [0.2.8] — 2026-10-18
+
+### Fixed
+
+- **El motor se recupera solo de un corte de conexión.** Si el WebSocket se cerraba (el server lo
+  cierra al rechazar una operación, o se cae la red), el objeto de la conexión seguía existiendo
+  y el ciclo lo reutilizaba: cada intento fallaba con `SyncConnection: sin conexión abierta` y el
+  motor quedaba muerto hasta recargar el plugin. Ahora el ciclo pide una conexión **viva** y la
+  reabre si hace falta, retomando desde el checkpoint.
+
 ## [0.2.7] — 2026-10-18
 
 ### Fixed
