@@ -1,0 +1,344 @@
+/**
+ * Orquestador de aplicación: intención → temporal verificado → publicar → commit atómico.
+ *
+ * Invariantes (plan de fase 2, paso 3):
+ *  - La intención se persiste ANTES de escribir el temporal, y el temporal se verifica
+ *    (sha256 del plaintext) ANTES de publicar.
+ *  - El commit es atómico (StateStore.completeApply): `since` avanza SOLO cuando la
+ *    revisión quedó recuperablemente aplicada.
+ *  - Una **tercera versión local** (archivo modificado después de la base) jamás se pisa:
+ *    la intención queda `blocked`, el archivo local intacto, y la resolución es explícita.
+ *  - `recoverApplies()` decide desde las INTENCIONES + el estado real del filesystem:
+ *    no adivina — compara hashes.
+ *
+ * Fase 3, paso 2: la ruta descifrada se VALIDA (portable a Windows/macOS/móvil) y el
+ * directorio destino se chequea por colisiones de case: el bloqueo es explícito, con
+ * motivo, nunca un skip silencioso.
+ */
+import { cryptoProvider, decryptBlob } from '@ovaultd/crypto';
+import { toHex } from '@ovaultd/protocol';
+import { createIntent } from './apply.js';
+import { colisionDeCase, nombreBase, validarRutaDeVault } from './vault-path.js';
+const sha256Hex = (bytes) => toHex(cryptoProvider().sha256(bytes));
+const dirVault = (path) => {
+    const corte = path.lastIndexOf('/');
+    return corte < 0 ? '.' : path.slice(0, corte);
+};
+/** Guard de tercera versión: ¿publicar esta revisión pisa algo que no debería? */
+async function evaluarGuard(deps, revision, 
+/** sha256 hex del PLAINTEXT descifrado que se va a escribir (null en deletes/carpetas). */
+hashRemoto) {
+    const { store, port } = deps;
+    // Un borrado sin path (tombstone de algo que nunca vimos) no toca el vault.
+    if (revision.deleted && revision.path === '')
+        return { verdict: 'already-gone' };
+    const base = await store.getBase(revision.pathId);
+    const actual = await port.stat(revision.path).catch(() => null);
+    if (revision.kind === 'folder') {
+        if (actual && actual.isFile)
+            return { verdict: 'blocked', reason: 'un archivo local ocupa el camino' };
+        return { verdict: 'safe' };
+    }
+    const hashActual = actual?.isFile ? sha256Hex(await port.read(revision.path)) : null;
+    if (revision.deleted) {
+        if (!actual)
+            return { verdict: 'already-gone' };
+        if (base?.contentHash && hashActual === base.contentHash)
+            return { verdict: 'safe' };
+        return { verdict: 'blocked', reason: 'borrado remoto contra contenido local distinto de la base' };
+    }
+    // add / mod de archivo
+    if (!actual) {
+        if (base)
+            return { verdict: 'blocked', reason: 'el archivo local desapareció respecto de la base' };
+        return { verdict: 'safe' }; // creación fresca
+    }
+    if (actual.isDirectory)
+        return { verdict: 'blocked', reason: 'un directorio local ocupa el camino' };
+    // El "esperado" es el hash del registro (si viniera) o — como la delta no manda
+    // content_hash (ADR-0014) — el del PLAINTEXT DESCIFRADO que estamos por escribir:
+    // un local que YA coincide con el remoto converge, no es un conflicto.
+    const hashEsperado = revision.contentHash ?? hashRemoto;
+    if (hashEsperado !== null && hashActual === hashEsperado)
+        return { verdict: 'identical' };
+    if (!base)
+        return { verdict: 'blocked', reason: 'existe localmente y no hay base (dos creaciones)' };
+    if (!base.contentHash)
+        return { verdict: 'blocked', reason: 'sin hash en la base: no puedo descartar una edición local' };
+    if (hashActual === base.contentHash)
+        return { verdict: 'safe' };
+    return { verdict: 'blocked', reason: 'hay una edición local posterior a la base' };
+}
+/** Aplica una revisión remota. `stored` es el blob almacenado (nonce incluido) o null. */
+export async function applyRevision(deps, revision, stored, 
+/** `forzar`: la resolución explícita del usuario pisa un bloqueo de tercera versión
+ *  (la elección "usar la del server"). Los chequeos estructurales no se saltean. */
+opciones = {}) {
+    const { store, port } = deps;
+    // 0) Integridad del transporte ANTES de journalizar nada.
+    if (!revision.deleted && revision.kind === 'file') {
+        if (!stored)
+            throw new Error('apply: falta el blob almacenado');
+        const realBlobId = sha256Hex(stored);
+        if (revision.blobId && realBlobId !== revision.blobId) {
+            throw new Error(`apply: blob_id no coincide (${realBlobId} != ${revision.blobId})`);
+        }
+    }
+    // 1) Intención ANTES de escribir el temporal.
+    let intent = createIntent({
+        pathId: revision.pathId,
+        rev: revision.rev,
+        blobId: revision.blobId ?? '',
+        path: revision.path,
+        kind: revision.kind,
+        deleted: revision.deleted,
+        contentHash: revision.contentHash ?? null,
+    });
+    await store.putIntent(intent);
+    // 1b) La ruta DESCIFRADA se valida antes de tocar nada: traversal, absolutas, nombres
+    // que otra plataforma no puede representar (plan fase 3, paso 2). Bloqueada con motivo.
+    if (revision.path !== '') {
+        const validez = validarRutaDeVault(revision.path);
+        if (!validez.ok) {
+            intent = { ...intent, state: 'blocked', reason: `ruta rechazada: ${validez.motivo}` };
+            await store.putIntent(intent);
+            return { status: 'blocked', intentId: intent.intentId, reason: intent.reason };
+        }
+    }
+    // 2) Descifrar (AEAD) y verificar el plaintext.
+    let plaintext = null;
+    let hashVerificado = null;
+    if (!revision.deleted && revision.kind === 'file') {
+        plaintext = decryptBlob(deps.keys, stored);
+        hashVerificado = sha256Hex(plaintext);
+        if (revision.contentHash && hashVerificado !== revision.contentHash) {
+            await store.deleteIntent(intent.intentId);
+            throw new Error(`apply: content_hash no coincide (${hashVerificado} != ${revision.contentHash})`);
+        }
+    }
+    // 3) Guard de tercera versión ANTES de publicar. Con `forzar`, un bloqueo de tercera
+    // versión se convierte en una escritura DELIBERADA (la resolución explícita del usuario).
+    const guard = await evaluarGuard(deps, revision, hashVerificado);
+    let verdict = guard.verdict;
+    if (guard.verdict === 'blocked') {
+        if (opciones.forzar !== true) {
+            intent = { ...intent, state: 'blocked', reason: guard.reason };
+            await store.putIntent(intent);
+            return { status: 'blocked', intentId: intent.intentId, reason: guard.reason };
+        }
+        verdict = 'safe';
+    }
+    // 3b) Colisión de case/normalización en el directorio destino: en filesystems
+    // case-insensitive dos nombres que solo difieren en mayúsculas no pueden convivir.
+    // Solo importa cuando vamos a ESCRIBIR (verdict `safe`); si el directorio no existe
+    // todavía no hay nada con qué chocar.
+    if (!revision.deleted && revision.path !== '' && verdict === 'safe') {
+        const dir = dirVault(revision.path);
+        try {
+            const entradas = await port.list(dir);
+            const choque = colisionDeCase(entradas.map((entrada) => entrada.name), nombreBase(revision.path));
+            if (choque !== null) {
+                intent = {
+                    ...intent,
+                    state: 'blocked',
+                    reason: `colisión de case: «${choque}» ocupa el nombre`,
+                };
+                await store.putIntent(intent);
+                return { status: 'blocked', intentId: intent.intentId, reason: intent.reason };
+            }
+        }
+        catch {
+            // Sin directorio legible no hay colisión que detectar: el mkdirp de abajo lo crea.
+        }
+    }
+    // 4) Publicar.
+    if (revision.kind === 'file') {
+        if (revision.deleted) {
+            if (verdict !== 'already-gone')
+                await port.unlink(revision.path);
+        }
+        else if (verdict !== 'identical') {
+            const dir = dirVault(revision.path);
+            if (dir !== '.')
+                await port.mkdirp(dir);
+            const { tempName } = await port.writeTemp(dir, plaintext);
+            intent = { ...intent, tempName, contentHash: hashVerificado, state: 'verified' };
+            await store.putIntent(intent);
+            await port.rename(tempName, revision.path);
+        }
+    }
+    else if (!revision.deleted) {
+        await port.mkdirp(revision.path);
+    }
+    // 5) Commit atómico: cierra la intención y avanza base/índice/checkpoint.
+    await store.completeApply({
+        intentId: intent.intentId,
+        base: {
+            pathId: revision.pathId,
+            rev: revision.rev,
+            blobId: revision.blobId,
+            contentHash: revision.deleted ? null : (revision.contentHash ?? hashVerificado),
+        },
+        index: {
+            pathId: revision.pathId,
+            path: revision.path,
+            kind: revision.kind,
+            deleted: revision.deleted,
+            rev: revision.rev,
+            blobId: revision.blobId,
+            contentHash: revision.deleted ? null : (revision.contentHash ?? hashVerificado),
+            size: plaintext ? plaintext.length : null,
+            mtime: null,
+        },
+        checkpoint: { since: revision.rev, minRev: null },
+    });
+    return { status: 'applied', intentId: intent.intentId };
+}
+/** Commit de una intención ya publicada (la usan `applyRevision` y la recuperación). */
+async function commitDesdeIntento(deps, intent) {
+    const { store, port } = deps;
+    const stat = intent.path ? await port.stat(intent.path).catch(() => null) : null;
+    await store.completeApply({
+        intentId: intent.intentId,
+        base: {
+            pathId: intent.pathId,
+            rev: intent.rev,
+            blobId: intent.blobId === '' ? null : intent.blobId,
+            contentHash: intent.deleted ? null : (intent.contentHash ?? null),
+        },
+        index: {
+            pathId: intent.pathId,
+            path: intent.path,
+            kind: intent.kind ?? 'file',
+            deleted: intent.deleted === true,
+            rev: intent.rev,
+            blobId: intent.blobId === '' ? null : intent.blobId,
+            contentHash: intent.deleted ? null : (intent.contentHash ?? null),
+            size: stat?.size ?? null,
+            mtime: null,
+        },
+        checkpoint: { since: intent.rev, minRev: null },
+    });
+}
+/**
+ * Recuperación al reiniciar: compara cada intención con el estado REAL del filesystem.
+ * - `pending`  → nada se publicó: se limpia.
+ * - `verified` → hay temporal verificado y/o destino con el hash esperado: completa
+ *   (publicar si falta, y commitear). Si el destino tiene cualquier otra cosa, `blocked`.
+ */
+export async function recoverApplies(deps) {
+    const { store, port } = deps;
+    const reporte = { completed: 0, cleaned: 0, blocked: 0 };
+    const intents = await store.listIntents();
+    for (const intent of intents) {
+        if (intent.state === 'blocked')
+            continue;
+        if (intent.state === 'pending') {
+            if (intent.tempName)
+                await port.unlink(intent.tempName).catch(() => undefined);
+            await store.deleteIntent(intent.intentId);
+            reporte.cleaned += 1;
+            continue;
+        }
+        // state === 'verified'
+        if (!intent.tempName || !intent.path || !intent.contentHash) {
+            await store.putIntent({ ...intent, state: 'blocked', reason: 'intención verificada incompleta' });
+            reporte.blocked += 1;
+            continue;
+        }
+        const destino = await port.stat(intent.path).catch(() => null);
+        const hashDestino = destino?.isFile ? sha256Hex(await port.read(intent.path)) : null;
+        if (hashDestino !== null && hashDestino === intent.contentHash) {
+            // El rename ya había pasado: faltaba SOLO el commit.
+            await commitDesdeIntento(deps, intent);
+            reporte.completed += 1;
+            continue;
+        }
+        const temp = await port.stat(intent.tempName).catch(() => null);
+        if (temp?.isFile) {
+            const hashTemp = sha256Hex(await port.read(intent.tempName));
+            if (hashTemp !== intent.contentHash) {
+                await port.unlink(intent.tempName).catch(() => undefined);
+                await store.putIntent({ ...intent, state: 'blocked', reason: 'temporal no coincide con el esperado' });
+                reporte.blocked += 1;
+                continue;
+            }
+            // Publicar es seguro SOLO si el destino no cambió respecto de la base.
+            const base = await store.getBase(intent.pathId);
+            const destinoOk = hashDestino === null ? base === null : base?.contentHash != null && hashDestino === base.contentHash;
+            if (!destinoOk) {
+                await store.putIntent({ ...intent, state: 'blocked', reason: 'destino con cambios locales: no se pisa' });
+                reporte.blocked += 1;
+                continue;
+            }
+            await port.rename(intent.tempName, intent.path);
+            await commitDesdeIntento(deps, intent);
+            reporte.completed += 1;
+            continue;
+        }
+        // Ni temporal ni destino esperado: no se adivina.
+        await store.putIntent({ ...intent, state: 'blocked', reason: 'sin temporal ni destino esperado' });
+        reporte.blocked += 1;
+    }
+    return reporte;
+}
+/**
+ * Resuelve una intención BLOQUEADA con la elección EXPLÍCITA del usuario (resolución
+ * mínima de conflictos). Dos caminos:
+ *
+ *  - `'remoto'`: baja el contenido del server y PISA el local (apply forzado). Quien
+ *    elige esto pierde su edición local a propósito.
+ *  - `'local'`: el archivo local queda INTACTO; la base avanza al remoto (con el hash
+ *    del plaintext remoto) y el próximo push sube la edición local como revisión nueva.
+ *
+ * Ambas cierran la intención y avanzan el checkpoint hasta la revisión bloqueada: el
+ * pull puede seguir. Los bloqueos ESTRUCTURALES (ruta inválida, colisión de case) no se
+ * resuelven por acá — son datos que no pueden materializarse, no una tercera versión.
+ */
+export async function resolverBloqueado(deps, intent, eleccion, conn) {
+    if (intent.state !== 'blocked') {
+        throw new Error('resolver: la intención no está bloqueada');
+    }
+    if (eleccion === 'remoto') {
+        const stored = await conn.getBlob(intent.blobId);
+        return applyRevision(deps, {
+            pathId: intent.pathId,
+            path: intent.path ?? '',
+            kind: intent.kind ?? 'file',
+            deleted: intent.deleted === true,
+            rev: intent.rev,
+            blobId: intent.blobId === '' ? null : intent.blobId,
+            contentHash: intent.contentHash ?? null,
+        }, stored, { forzar: true });
+    }
+    // 'local': la base avanza al remoto SIN tocar el archivo local.
+    if (intent.deleted === true) {
+        throw new Error('resolver: mantener la versión local de un borrado remoto todavía no está soportado');
+    }
+    const stored = await conn.getBlob(intent.blobId);
+    const hashRemoto = sha256Hex(decryptBlob(deps.keys, stored));
+    const stat = intent.path ? await deps.port.stat(intent.path).catch(() => null) : null;
+    await deps.store.completeApply({
+        intentId: intent.intentId,
+        base: {
+            pathId: intent.pathId,
+            rev: intent.rev,
+            blobId: intent.blobId === '' ? null : intent.blobId,
+            contentHash: hashRemoto,
+        },
+        index: {
+            pathId: intent.pathId,
+            path: intent.path ?? '',
+            kind: intent.kind ?? 'file',
+            deleted: false,
+            rev: intent.rev,
+            blobId: null,
+            contentHash: hashRemoto,
+            size: stat?.size ?? null,
+            mtime: null,
+        },
+        checkpoint: { since: intent.rev, minRev: null },
+    });
+    return { status: 'applied', intentId: intent.intentId };
+}
+//# sourceMappingURL=apply-runner.js.map

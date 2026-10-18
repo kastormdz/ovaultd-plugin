@@ -42,6 +42,17 @@ jobs:
           npm ci
           npm run build
 
+      # El repo se construye SOLO gracias a `vendor/`: si el vendor quedó viejo respecto del
+      # monorepo, el plugin publicado llevaría un núcleo distinto al del corte. Se re-sincroniza
+      # y si el árbol cambia, el gate falla.
+      - name: Verificar que el vendor del núcleo esté al día
+        run: |
+          node scripts/sincronizar-core.mjs
+          if ! git diff --exit-code --stat vendor/; then
+            echo "✗ vendor/ quedó desactualizado: corré scripts/sincronizar-core.mjs y commiteá el resultado" >&2
+            exit 1
+          fi
+
       - name: Instalar, testear y construir el plugin
         run: |
           npm ci

@@ -17,6 +17,7 @@
  */
 
 import { cryptoProvider } from '@ovaultd/crypto';
+import { ventana } from './entorno';
 import type { FileSystemPort, VaultDirEntry, VaultStat } from '@ovaultd/core';
 import { toHex } from '@ovaultd/protocol';
 import type { DataAdapter, EventRef, ListedFiles, TAbstractFile, Vault } from 'obsidian';
@@ -238,7 +239,7 @@ export class PuenteDeEventos {
     this.corriendo = false;
     for (const ref of this.refs) this.vault.offref(ref);
     this.refs.length = 0;
-    for (const pendiente of this.pendientes.values()) globalThis.clearTimeout(pendiente.timer);
+    for (const pendiente of this.pendientes.values()) ventana.clearTimeout(pendiente.timer);
     this.pendientes.clear();
   }
 
@@ -262,7 +263,7 @@ export class PuenteDeEventos {
       // ruta que ya no existe sería ruido (el motor lo leería como borrado fantasma).
       const pendienteViejo = this.pendientes.get(oldPath);
       if (pendienteViejo !== undefined) {
-        globalThis.clearTimeout(pendienteViejo.timer);
+        ventana.clearTimeout(pendienteViejo.timer);
         this.pendientes.delete(oldPath);
       }
     }
@@ -272,7 +273,7 @@ export class PuenteDeEventos {
 
     if (fusion === null) {
       // creado + borrado dentro de la ventana: neto nada (archivo transitorio).
-      if (previo !== undefined) globalThis.clearTimeout(previo.timer);
+      if (previo !== undefined) ventana.clearTimeout(previo.timer);
       this.pendientes.delete(path);
       return;
     }
@@ -281,13 +282,13 @@ export class PuenteDeEventos {
       tipo: fusion,
       oldPath: fusion === 'renombrado' ? (tipo === 'renombrado' ? oldPath : previo?.oldPath) : undefined,
       carpeta: esCarpetaAbstracta(archivo),
-      timer: globalThis.setTimeout(
+      timer: ventana.setTimeout(
         () => void this.vaciar(path),
         this.opciones.estabilidadMs ?? 250,
       ),
     };
 
-    if (previo !== undefined) globalThis.clearTimeout(previo.timer);
+    if (previo !== undefined) ventana.clearTimeout(previo.timer);
     this.pendientes.set(path, pendiente);
   }
 

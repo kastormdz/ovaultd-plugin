@@ -32,6 +32,9 @@ cd "$REPO" || exit 2
 # diseño) están vetados abajo; cualquier OTRO match se revisa a mano.
 SECRETS='(password|passwd|secret|token|api[_-]?key)["'"'"']?[[:space:]]*[:=][[:space:]]*["'"'"'][^"'"'"']{8,}'
 SECRETS_VETADOS='password-de-prueba|token-de-prueba|contrase'
+# Un valor que es un tipo de JS no es un secreto: los bundles de terceros traen tablas
+# como `toMontgomerySecret: "function"` (noble-curves) que el patrón de arriba cazaba.
+SECRETS_VETADOS="$SECRETS_VETADOS|: *[\"'\"'\"'](function|string|object|boolean|number|bigint|symbol|undefined)[\"'\"'\"']"
 # `X="$(cmd)"` es una sustitución de shell, no un secreto literal.
 # `X="${VAR}"` / `X: "${VAR:-default}"` es una expansión de variable, tampoco.
 SECRETS_EXPANSION='[:=][[:space:]]*"\$\{'
@@ -87,6 +90,9 @@ while IFS= read -r f; do
   # El propio scanner lleva los patrones como texto (y está vetado a mano): no se
   # auto-escanea. Si se versiona una copia nueva del scanner, agregarla acá.
   [ "$f" = "scripts/scan-leaks.sh" ] && continue
+  # `vendor/` es copia generada del monorepo (que se escanea en su propio repo) y sus
+  # `dist/` son bundles minificados de terceros: escanearlos solo da falsos positivos.
+  case "$f" in vendor/*) continue ;; esac
   reportar "$(scan_archivo "$f")"
 done < <(git ls-files)
 

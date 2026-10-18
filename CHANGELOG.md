@@ -6,6 +6,22 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 (mismo `MAJOR.MINOR` = pareja probada junta; ver ADR-0018 y la sección «Compatibility» del
 README).
 
+## [0.2.3] — 2026-10-18
+
+### Fixed
+
+- **El repositorio ahora se construye solo.** El núcleo (`@ovaultd/{core,crypto,protocol}`)
+  vive en `vendor/` (copia generada y verificada en CI) en vez de resolverse por
+  `file:../ovaultd/…`: quien clonaba únicamente este repositorio —como la verificación de
+  build del directorio de la comunidad— no podía compilar (TS2307 en cada import del núcleo).
+- El `README` se titula con el nombre del manifest (`oVaultd Sync`), como pide el directorio.
+- Los timers del adaptador de archivos usan la ventana del renderer (los últimos `globalThis`).
+
+### Added
+
+- `scripts/sincronizar-core.mjs`: trae el núcleo del monorepo a `vendor/` (clonándolo si hace
+  falta). El workflow de release falla si `vendor/` quedó desactualizado.
+
 ## [0.2.2] — 2026-10-18
 
 Correcciones que salieron de la revisión automática del directorio de la comunidad.

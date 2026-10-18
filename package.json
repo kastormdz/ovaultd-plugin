@@ -1,6 +1,6 @@
 {
   "name": "@ovaultd/plugin",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Obsidian plugin for ovaultd — self-hosted, end-to-end encrypted sync.",
   "private": true,
   "license": "MIT",
@@ -11,9 +11,9 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@ovaultd/core": "file:../ovaultd/packages/core",
-    "@ovaultd/crypto": "file:../ovaultd/packages/crypto",
-    "@ovaultd/protocol": "file:../ovaultd/packages/protocol"
+    "@ovaultd/core": "file:./vendor/ovaultd/core",
+    "@ovaultd/crypto": "file:./vendor/ovaultd/crypto",
+    "@ovaultd/protocol": "file:./vendor/ovaultd/protocol"
   },
   "devDependencies": {
     "esbuild": "0.28.2",
