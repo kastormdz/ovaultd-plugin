@@ -18,6 +18,7 @@ import { toHex } from '@ovaultd/protocol';
 import type { DataAdapter, EventRef, TAbstractFile, Vault } from 'obsidian';
 
 import type { CambioDeVault } from './ObsidianFileAdapter';
+import { ventana } from './entorno';
 import { carpetaDelPlugin } from './rutas';
 
 /** Archivos del spike, dentro de la carpeta del plugin (que depende del configDir). */
@@ -70,7 +71,7 @@ export class RegistroDeSpike {
       this.vault.on('rename', (a, oldPath) => this.crudo('renombrado', a, oldPath)),
     );
 
-    this.timerVolcado = globalThis.setInterval(() => void this.volcar(), CADENCIA_VOLCADO_MS);
+    this.timerVolcado = ventana.setInterval(() => void this.volcar(), CADENCIA_VOLCADO_MS);
   }
 
   detener(): void {
@@ -78,7 +79,7 @@ export class RegistroDeSpike {
     for (const ref of this.refs) this.vault.offref(ref);
     this.refs.length = 0;
     if (this.timerVolcado !== null) {
-      globalThis.clearInterval(this.timerVolcado);
+      ventana.clearInterval(this.timerVolcado);
       this.timerVolcado = null;
     }
     void this.volcar();
@@ -117,7 +118,7 @@ export class RegistroDeSpike {
     if (this.sondasEnVuelo > 400) return;
     this.sondasEnVuelo += 1;
 
-    globalThis.setTimeout(() => {
+    ventana.setTimeout(() => {
       void (async () => {
         try {
           const st = await this.datos.stat(path);

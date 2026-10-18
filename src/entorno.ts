@@ -5,8 +5,9 @@
  * ventana correcta: Obsidian puede tener ventanas emergentes (popouts) con su propio
  * `window`, y `globalThis` no distingue.
  *
- * En los tests (node) no hay `window`: cae a `globalThis`, así el motor sigue siendo
- * testeable sin Obsidian.
+ * El fallback a `globalThis` es lo único que queda fuera de Obsidian: los tests corren en
+ * node, donde no hay `window`, y este módulo tiene que poder evaluarse ahí. Es un warning
+ * deliberado del linter del directorio, más barato que meter un mock de la API entera.
  */
 export const ventana: Window = (
   typeof window !== 'undefined' ? window : globalThis

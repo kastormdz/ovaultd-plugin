@@ -6,6 +6,18 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 (mismo `MAJOR.MINOR` = pareja probada junta; ver ADR-0018 y la sección «Compatibility» del
 README).
 
+## [0.2.4] — 2026-10-18
+
+### Fixed
+
+- **`minAppVersion` pasa de 1.5.0 a 1.8.7**, que es la versión que introduce `messageEl`
+  (el API que reemplaza al `noticeEl` deprecado): mientras el mínimo era 1.5.0 el revisor lo
+  marcaba como error por usar un API más nuevo que el declarado. Es el recorte mínimo
+  posible: `setDestructive` y el API declarativo de ajustes son de 1.13.0 y no se usan.
+- Los timers del resolver y del registro de eventos pasan por la ventana del renderer: eran
+  los últimos `globalThis` fuera del helper `src/entorno.ts` (que conserva el fallback a
+  `globalThis` porque los tests corren en node).
+
 ## [0.2.3] — 2026-10-18
 
 ### Fixed

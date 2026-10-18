@@ -20,6 +20,7 @@ import type { IntentEntry } from '@ovaultd/core';
 
 import type PluginOvaultd from './main';
 
+import { ventana } from './entorno';
 import { dirDelPlugin } from './rutas';
 
 class ModalDeConflicto extends Modal {
@@ -135,7 +136,7 @@ export async function procesarPedidoDeResolucion(plugin: PluginOvaultd): Promise
     // corre unos segundos después de arrancar): se espera hasta un minuto a que aparezca.
     let pendientes = await plugin.motor.conflictosPendientes();
     for (let intento = 0; pendientes.length === 0 && intento < 60; intento += 1) {
-      await new Promise((seguir) => globalThis.setTimeout(seguir, 1000));
+      await new Promise((seguir) => ventana.setTimeout(seguir, 1000));
       pendientes = await plugin.motor.conflictosPendientes();
     }
 
