@@ -37,8 +37,14 @@ export interface ApplyDeps {
     port: FileSystemPort;
     /** Subclaves `sync2` del vault (incluye la de contenido). */
     keys: SubKeys;
+    /**
+     * Conexión con el server. Opcional: sin ella no hay fusión 3-vías (el bloqueo por
+     * "ambos cambiaron" queda igual de explícito que siempre), pero el camino normal de
+     * pull la pasa siempre. Se usa SOLO para bajar el blob de la revisión base del CAS.
+     */
+    conn?: SyncConnection;
 }
-export type ApplyStatus = 'applied' | 'blocked' | 'noop';
+export type ApplyStatus = 'applied' | 'merged' | 'blocked' | 'noop';
 export interface ApplyOutcome {
     status: ApplyStatus;
     intentId: string;

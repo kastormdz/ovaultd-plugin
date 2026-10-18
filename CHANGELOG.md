@@ -6,6 +6,17 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 (mismo `MAJOR.MINOR` = pareja probada junta; ver ADR-0018 y la sección «Compatibility» del
 README).
 
+## [0.2.13] — 2026-10-18
+
+### Added
+
+- **Los conflictos de texto se fusionan solos cuando no se pisan.** Si dos dispositivos editan
+  la misma nota pero en partes distintas (cada cambio en su párrafo o en su línea), el motor
+  combina las dos ediciones automáticamente y sube el resultado como una revisión nueva. Si las
+  ediciones tocan el mismo tramo, queda el conflicto explícito de siempre.
+- La fusión se calcula 100 % local (el server no ve nada) y es conservadora: cualquier
+  solapamiento o duda es conflicto, nunca una adivinanza. Tu versión local jamás se pisa sola.
+
 ## [0.2.12] — 2026-10-18
 
 ### Fixed
