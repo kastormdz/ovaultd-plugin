@@ -491,9 +491,9 @@ export class MotorDeSync {
 
   /**
    * Una conexión NUEVA (abierta desde cero) para operaciones de lectura pesadas como el
-   * export: no comparte el lock ni la conexión del ciclo de sync.
+   * export o la historia: no comparte el lock ni la conexión del ciclo de sync.
    */
-  async conexionParaExport(): Promise<SyncConnection | null> {
+  async conexionAlVuelo(): Promise<SyncConnection | null> {
     const local = this.estadoLocal ?? (await this.leerEstadoLocal());
     if (local === null) return null;
 
@@ -531,7 +531,7 @@ export class MotorDeSync {
 
     // Con el ciclo en marcha se usa su conexión; si todavía no abrió (recién arrancado,
     // como en el pedido E2E) se abre una al vuelo — el resolver solo baja el blob.
-    const conn = this.conn ?? (await this.conexionParaExport());
+    const conn = this.conn ?? (await this.conexionAlVuelo());
     if (conn === null) throw new Error('no hay sesión guardada (¿vinculaste el vault?)');
 
     try {

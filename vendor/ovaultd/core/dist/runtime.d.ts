@@ -15,5 +15,5 @@
  * cifrar → firmar → batch por WS) y `correrCiclo` — la tabla de decisión pull→push con
  * conflictos explícitos (SyncClient).
  */
-export declare const RUNTIME_VERSION = "0.5.0";
+export declare const RUNTIME_VERSION = "0.6.0";
 //# sourceMappingURL=runtime.d.ts.map

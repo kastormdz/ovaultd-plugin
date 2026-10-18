@@ -10,7 +10,7 @@
  * y clasifica frames (`notify`/`ack` se encolan, un `error` rechaza la espera en curso).
  */
 import { type SubKeys } from '@ovaultd/crypto';
-import { type BatchAckWire, type BatchWire, type ChangesWire, type ConflictWire, type ServerMessageWire } from '@ovaultd/protocol';
+import { type BatchAckWire, type BatchWire, type ChangesWire, type ConflictWire, type HistoryWire, type ServerMessageWire } from '@ovaultd/protocol';
 export declare class SyncHttpError extends Error {
     readonly status: number;
     readonly code: string | null;
@@ -58,6 +58,12 @@ export declare class SyncConnection {
     }>;
     /** Delta HTTP desde `since` (revisión completa, con cursor). */
     pull(since: number, limit?: number): Promise<ChangesWire>;
+    /**
+     * Historia de un archivo (LECTURA pura del oplog): página por `path_id` (hex), más
+     * nueva primero, con la cadena de renames ya resuelta por el server. `before` acota
+     * (`rev < before`). Nada viaja descifrado: el llamador resuelve nombres con `path_enc`.
+     */
+    historial(pathIdHex: string, before?: number, limit?: number): Promise<HistoryWire>;
     /** Descarga un blob del CAS (el llamador verifica que los bytes hasheen al `blob_id`). */
     getBlob(blobIdHex: string): Promise<Uint8Array>;
     /** Publica un blob (el contenido ya cifrado, con su sobre). */

@@ -5,6 +5,11 @@ import { cabeceraCliente, evaluarCompatibilidad, type MetaDelServer } from './co
 import { carpetaDelPlugin } from './rutas';
 import { comandoExportar, comandoImportar, procesarPedidosDeE2E } from './ExportImport';
 import { comandoResolver, procesarPedidoDeResolucion } from './Resolver';
+import {
+  comandoHistoriaDeNota,
+  comandoHistoriaDeRuta,
+  procesarPedidoDeHistoria,
+} from './HistoryView';
 import { comandoCrearVault } from './CrearVault';
 import { AjustesDeOvaultd, AJUSTES_POR_DEFECTO, TabAjustes } from './SettingsTab';
 import { RegistroDeSpike } from './spikeEventos';
@@ -111,6 +116,22 @@ export default class PluginOvaultd extends Plugin {
     });
 
     this.addCommand({
+      id: 'historia-nota',
+      name: 'Ver historia de esta nota…',
+      callback: () => {
+        comandoHistoriaDeNota(this);
+      },
+    });
+
+    this.addCommand({
+      id: 'historia-archivo',
+      name: 'Ver historia de un archivo (por ruta)…',
+      callback: () => {
+        comandoHistoriaDeRuta(this);
+      },
+    });
+
+    this.addCommand({
       id: 'crear-vault',
       name: 'Crear un vault nuevo…',
       callback: () => {
@@ -175,6 +196,11 @@ export default class PluginOvaultd extends Plugin {
     // Pedido de resolución de conflicto (mismo mecanismo, para el E2E de la fase 5).
     void procesarPedidoDeResolucion(this).catch((error) => {
       console.error('ovaultd: el pedido de resolución falló', error);
+    });
+
+    // Pedido de historia (mismo mecanismo, para el E2E de la fase 5, corte 5d).
+    void procesarPedidoDeHistoria(this).catch((error) => {
+      console.error('ovaultd: el pedido de historia falló', error);
     });
 
     if (this.ajustes.serverUrl !== '') {

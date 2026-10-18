@@ -54,7 +54,7 @@ export async function ejecutarExport(
   if (fsd === null) throw new Error('el export necesita la app de escritorio (FS del sistema)');
   if (destino.trim() === '') throw new Error('falta la carpeta destino');
 
-  const conn = await plugin.motor.conexionParaExport();
+  const conn = await plugin.motor.conexionAlVuelo();
   if (conn === null) throw new Error('no hay vault vinculado');
   const keys = plugin.motor.claves;
   if (keys === null) throw new Error('faltan las claves del vault');

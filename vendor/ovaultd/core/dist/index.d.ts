@@ -20,4 +20,5 @@ export * from './vault-path.js';
 export * from './SyncFilter.js';
 export * from './merge.js';
 export * from './export.js';
+export * from './history.js';
 //# sourceMappingURL=index.d.ts.map

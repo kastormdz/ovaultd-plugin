@@ -15,6 +15,7 @@ import type { VaultSummary } from '@ovaultd/protocol';
 import { comandoCrearVault, ModalDeVincular } from './CrearVault';
 import { abrirBorradoVault, abrirCambiarPassword, abrirRecuperarVault } from './LlavesDeVault';
 import { comandoExportar, comandoImportar } from './ExportImport';
+import { comandoHistoriaDeNota, comandoHistoriaDeRuta } from './HistoryView';
 import type PluginOvaultd from './main';
 
 export interface AjustesDeOvaultd {
@@ -229,6 +230,32 @@ export class TabAjustes extends PluginSettingTab {
       .addButton((boton) =>
         boton.setButtonText('Importar…').onClick(() => {
           comandoImportar(this.plugin);
+        }),
+      );
+
+    // ------------------------------------------------------------------- historia
+    new Setting(containerEl).setName('Historia').setHeading();
+
+    new Setting(containerEl)
+      .setName('Ver la historia de la nota activa')
+      .setDesc(
+        'Cada versión desde que el vault está vinculado, con preview y diff antes de ' +
+          'restaurar. Restaurar sube una revisión NUEVA: la historia no se reescribe.',
+      )
+      .addButton((boton) =>
+        boton.setButtonText('Ver historia…').onClick(() => {
+          comandoHistoriaDeNota(this.plugin);
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName('Historia de un archivo por ruta')
+      .setDesc(
+        'Para archivos BORRADOS o nombres anteriores a un renombre: escribí la ruta dentro del vault.',
+      )
+      .addButton((boton) =>
+        boton.setButtonText('Elegir ruta…').onClick(() => {
+          comandoHistoriaDeRuta(this.plugin);
         }),
       );
   }

@@ -6241,6 +6241,69 @@
     }
   };
 
+  // src/history.ts
+  var import_diff_match_patch2 = __toESM(require_diff_match_patch(), 1);
+  async function historiaDeArchivo(opciones) {
+    const { conn, keys, ruta } = opciones;
+    const pathIdHex = toHex(pathId(keys, ruta));
+    const pagina = await conn.historial(pathIdHex, opciones.before, opciones.limit ?? 50);
+    const items = pagina.items.map((item) => {
+      let nombre = null;
+      if (item.path_enc) {
+        try {
+          nombre = decryptPathEnc(keys, b64Decode(item.path_enc), fromHex(item.path_id));
+        } catch {
+          nombre = null;
+        }
+      }
+      return {
+        rev: item.rev,
+        op: item.op,
+        pathId: item.path_id,
+        ruta: nombre,
+        blobId: item.blob_hash ?? null,
+        size: item.size ?? null,
+        deviceId: item.device_id ?? null,
+        epoch: item.epoch,
+        ts: item.ts
+      };
+    });
+    return { items, nextBefore: pagina.next_before, minRev: pagina.min_rev };
+  }
+  async function contenidoDeRevision(opciones) {
+    const { conn, keys, blobId: blobId2 } = opciones;
+    const bytes = await conn.getBlob(blobId2);
+    const calculado = toHex(blobId(bytes));
+    if (calculado !== blobId2.toLowerCase()) {
+      throw new Error(
+        `el blob descargado no coincide con su hash (esperado ${blobId2}, real ${calculado})`
+      );
+    }
+    return decryptBlob(keys, bytes);
+  }
+  function diffDeTextos(anterior, nuevo) {
+    if (anterior === nuevo) return "";
+    const dmp = new import_diff_match_patch2.default();
+    const {
+      chars1: charsAnterior,
+      chars2: charsNuevo,
+      lineArray: lineas
+    } = dmp.diff_linesToChars_(anterior, nuevo);
+    const diffs = dmp.diff_main(charsAnterior, charsNuevo, false);
+    dmp.diff_charsToLines_(diffs, lineas);
+    const salida = [];
+    for (const [operacion, texto] of diffs) {
+      if (operacion === 0) continue;
+      const prefijo = operacion === 1 ? "+" : "-";
+      const contenido = texto.endsWith("\n") ? texto.slice(0, -1) : texto;
+      if (contenido === "") continue;
+      for (const linea of contenido.split("\n")) {
+        salida.push(`${prefijo} ${linea}`);
+      }
+    }
+    return salida.join("\n");
+  }
+
   // src/outbox.ts
   var canonicalPayload = (req) => JSON.stringify({
     kind: req.kind,
@@ -6515,6 +6578,20 @@
     async pull(since, limit = 100) {
       const respuesta = await fetch(
         `${this.base}/api/v1/vaults/${this.opciones.vault}/changes?since=${since}&limit=${limit}`,
+        { headers: this.headers() }
+      );
+      return this.json(respuesta);
+    }
+    /**
+     * Historia de un archivo (LECTURA pura del oplog): página por `path_id` (hex), más
+     * nueva primero, con la cadena de renames ya resuelta por el server. `before` acota
+     * (`rev < before`). Nada viaja descifrado: el llamador resuelve nombres con `path_enc`.
+     */
+    async historial(pathIdHex, before, limit = 50) {
+      const params = new URLSearchParams({ path_id: pathIdHex, limit: String(limit) });
+      if (before !== void 0) params.set("before", String(before));
+      const respuesta = await fetch(
+        `${this.base}/api/v1/vaults/${this.opciones.vault}/history?${params.toString()}`,
         { headers: this.headers() }
       );
       return this.json(respuesta);
@@ -7342,7 +7419,7 @@
   };
 
   // src/runtime.ts
-  var RUNTIME_VERSION = "0.5.0";
+  var RUNTIME_VERSION = "0.6.0";
   var store = null;
   var exigirStore = () => {
     if (!store) throw new Error("el StateStore no est\xE1 abierto (llam\xE1 a store.open primero)");
@@ -7560,6 +7637,45 @@
         vaultUuid: syncVaultMeta.vaultUuid,
         epoch: syncVaultMeta.epoch
       });
+    },
+    // -------------------------------------------------------------- history (corte 5b)
+    /**
+     * Historia de un archivo (LECTURA pura): usa la conexión abierta SOLO para leer.
+     * No toca el estado de sync ni el vault.
+     */
+    "history.list": async (params) => {
+      if (!syncConn) throw new Error("history: no hay conexi\xF3n abierta (sync.open primero)");
+      const { keys } = exigirApply();
+      const ruta = typeof params.ruta === "string" ? params.ruta : "";
+      if (!ruta) throw new Error("history.list: falta ruta");
+      return historiaDeArchivo({
+        conn: syncConn,
+        keys,
+        ruta,
+        before: params.before === void 0 || params.before === null ? void 0 : Number(params.before),
+        limit: params.limit === void 0 ? void 0 : Number(params.limit)
+      });
+    },
+    /** Contenido descifrado de una revisión (verifica el hash del blob antes de descifrar). */
+    "history.preview": async (params) => {
+      if (!syncConn) throw new Error("history: no hay conexi\xF3n abierta (sync.open primero)");
+      const { keys } = exigirApply();
+      const blobId2 = typeof params.blobId === "string" ? params.blobId : "";
+      if (!blobId2) throw new Error("history.preview: falta blobId");
+      const contenido = await contenidoDeRevision({ conn: syncConn, keys, blobId: blobId2 });
+      let texto;
+      try {
+        texto = new TextDecoder("utf-8", { fatal: true }).decode(contenido);
+      } catch {
+        throw new Error(`la revisi\xF3n no es texto UTF-8 (${contenido.length} bytes binarios)`);
+      }
+      return { texto, bytes: contenido.length };
+    },
+    /** Diff legible por líneas entre dos textos (lo usa el preview del CLI). */
+    "history.diff": (params) => {
+      const anterior = typeof params.anterior === "string" ? params.anterior : "";
+      const nuevo = typeof params.nuevo === "string" ? params.nuevo : "";
+      return { diff: diffDeTextos(anterior, nuevo) };
     },
     "sync.close": () => {
       syncConn?.close();

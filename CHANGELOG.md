@@ -6,6 +6,23 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 (mismo `MAJOR.MINOR` = pareja probada junta; ver ADR-0018 y la sección «Compatibility» del
 README).
 
+## [0.2.15] — 2026-10-18
+
+### Added
+
+- **Historia por archivo**: «Ver historia de esta nota…» y «Ver historia de un archivo (por
+  ruta)…» (paleta de comandos y Opciones): cada revisión con su operación, fecha,
+  dispositivo y tamaño; funciona también para archivos BORRADOS y nombres anteriores a un
+  renombre.
+- **Preview y restore**: elegís una revisión y ves el diff contra el archivo actual (o el
+  contenido completo si no existe) ANTES de tocar nada; restaurar escribe esa versión en el
+  vault y el motor la sube como revisión NUEVA (la historia jamás se reescribe).
+
+### Changed
+
+- El núcleo vendorizado sube a la API de historia (requiere server 0.2.5+ del train):
+  `conexionParaExport` pasa a llamarse `conexionAlVuelo` (la usan el export y la historia).
+
 ## [0.2.14] — 2026-10-18
 
 ### Fixed
