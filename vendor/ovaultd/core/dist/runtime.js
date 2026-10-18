@@ -4670,26 +4670,50 @@
   // src/SyncFilter.ts
   var PREFIJO_TEMPORAL = ".ovaultd-tmp-";
   var CARPETAS_VETADAS = /* @__PURE__ */ new Map([
-    [".obsidian", "configuraci\xF3n del vault (excluida entera hasta la lista blanca)"],
     [".trash", "papelera local del vault"],
     [".git", "repositorio git anidado"],
     ["node_modules", "dependencias de node"]
   ]);
-  function motivoDeExclusion(path) {
-    for (const segmento of path.split("/")) {
+  var CONFIG_PORTABLE = [
+    /^appearance(\.json)?$/,
+    // tema, tamaño de letra, acentos visuales
+    /^community-plugins\.json$/,
+    // qué plugins de la comunidad están habilitados
+    /^core-plugins\.json$/,
+    // qué plugins del núcleo están habilitados
+    /^hotkeys\.json$/,
+    // atajos de teclado (portables: no llevan rutas absolutas)
+    /^snippets\/.+/,
+    // CSS propio del vault
+    /^themes\/.+/,
+    // temas instalados como archivos
+    /^plugins\/[^/]+\/manifest\.json$/
+    // la identidad de cada plugin, NO su data.json
+  ];
+  function esConfigPortable(dentroDelConfig) {
+    return CONFIG_PORTABLE.some((patron) => patron.test(dentroDelConfig));
+  }
+  function motivoDeExclusion(path, configDir = ".obsidian") {
+    const segmentos = path.split("/");
+    for (const segmento of segmentos) {
       if (segmento.startsWith(PREFIJO_TEMPORAL)) {
         return "temporal del motor";
       }
       const motivo = CARPETAS_VETADAS.get(segmento);
       if (motivo !== void 0) return motivo;
     }
-    const nombre = path.slice(path.lastIndexOf("/") + 1);
+    const nombre = segmentos[segmentos.length - 1];
     if (/^workspace(-mobile)?\.json$/.test(nombre)) {
       return "workspace por dispositivo";
     }
+    const i = segmentos.indexOf(configDir);
+    if (i !== -1) {
+      const dentro = segmentos.slice(i + 1).join("/");
+      return esConfigPortable(dentro) ? null : "configuraci\xF3n del vault (fuera de la lista blanca)";
+    }
     return null;
   }
-  var estaExcluido = (path) => motivoDeExclusion(path) !== null;
+  var estaExcluido = (path, configDir = ".obsidian") => motivoDeExclusion(path, configDir) !== null;
 
   // src/scan.ts
   async function escanearVault(port, keys, dir = "") {

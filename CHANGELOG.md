@@ -6,6 +6,21 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 (mismo `MAJOR.MINOR` = pareja probada junta; ver ADR-0018 y la sección «Compatibility» del
 README).
 
+## [0.2.11] — 2026-10-18
+
+### Added
+
+- **La configuración portátil de Obsidian ahora se sincroniza.** El tema, los snippets, los atajos
+  y qué plugins tenés habilitados viajan al otro dispositivo; antes la carpeta de configuración
+  quedaba afuera entera. Es una lista blanca explícita: `appearance.json`, `community-plugins.json`,
+  `core-plugins.json`, `hotkeys.json`, `snippets/`, `themes/` y los `manifest.json` de los plugins.
+
+### Nota
+
+- **No** se sincronizan los `data.json` de los plugins (ni el de ovaultd), el estado de sesión ni
+  los layouts por dispositivo: pueden contener credenciales de otros servicios, y esto viaja a
+  todos tus dispositivos y queda en tu servidor.
+
 ## [0.2.10] — 2026-10-18
 
 ### Added
