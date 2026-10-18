@@ -60,6 +60,10 @@ class FakeDataAdapter {
   async rename(desde: string, hacia: string): Promise<void> {
     const archivo = this.archivos.get(desde);
     if (archivo === undefined) throw new Error(`ENOENT: ${desde}`);
+    // FIEL al adapter de Obsidian: NO pisa el destino (tira este mismo error). El rename de
+    // POSIX —el que usa el NodeFileAdapter del CLI— sí pisa, y esa diferencia es justo la que
+    // hacía que bajar un cambio rompiera el ciclo solo en el plugin.
+    if (this.archivos.has(hacia)) throw new Error('Destination file already exists!');
     this.archivos.set(hacia, archivo);
     this.archivos.delete(desde);
   }
@@ -172,5 +176,19 @@ describe('AdaptadorDeArchivos (contrato del puerto)', () => {
 
     const adaptador = new AdaptadorDeArchivos(comoAdapter(fake));
     expect(mismos(await adaptador.read('r.md'), bytes('lectura'))).toBe(true);
+  });
+  it('rename sobre un archivo que YA existe: reemplaza (el adapter real no pisa)', async () => {
+    // El motor escribe temporal -> rename. Si el destino existe (aplicar una revisión sobre un
+    // archivo que ya está), el rename de Obsidian tira "Destination file already exists" y el
+    // ciclo moría: no se podía bajar ningún cambio sobre un archivo existente.
+    const fake = new FakeDataAdapter();
+    fake.archivos.set('Notas/uno.md', bytes('viejo'));
+    fake.archivos.set('Notas/uno.md.tmp', bytes('nuevo'));
+
+    const adaptador = new AdaptadorDeArchivos(comoAdapter(fake));
+    await adaptador.rename('Notas/uno.md.tmp', 'Notas/uno.md');
+
+    expect(new TextDecoder().decode(fake.archivos.get('Notas/uno.md'))).toBe('nuevo');
+    expect(fake.archivos.has('Notas/uno.md.tmp')).toBe(false);
   });
 });

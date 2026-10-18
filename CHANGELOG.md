@@ -6,6 +6,19 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 (mismo `MAJOR.MINOR` = pareja probada junta; ver ADR-0018 y la sección «Compatibility» del
 README).
 
+## [0.2.9] — 2026-10-18
+
+### Fixed
+
+- **Aplicar un cambio sobre un archivo que ya existe rompía el ciclo.** El motor escribe a un
+  temporal y lo renombra (escritura atómica). El `rename` de POSIX pisa el destino, pero el del
+  adapter de Obsidian **no**: lanza `Destination file already exists`. Como el `NodeFileAdapter`
+  del CLI sí pisa, la diferencia pasó desapercibida mientras los clientes solo subían (con el
+  servidor vacío). Al sincronizar un segundo dispositivo, aplicar sus revisiones sobre archivos
+  ya presentes fallaba en todos los ciclos y el vault no bajaba nada. Ahora el adapter borra el
+  destino antes de renombrar, y el mock de los tests es fiel al adapter real (antes no fallaba,
+  por eso el caso no estaba cubierto).
+
 ## [0.2.8] — 2026-10-18
 
 ### Fixed

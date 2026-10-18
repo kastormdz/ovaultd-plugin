@@ -90,6 +90,15 @@ export class AdaptadorDeArchivos implements FileSystemPort {
   async rename(relFrom: string, relTo: string): Promise<void> {
     const desde = this.normalizar(relFrom);
     const hacia = this.normalizar(relTo);
+
+    // El `rename` del adapter de Obsidian NO pisa el destino: cuando el motor aplica una
+    // revisión sobre un archivo que ya existe (writeTemp → rename), tira "Destination file
+    // already exists". El rename de POSIX (el del NodeFileAdapter del CLI) sí pisa, así que el
+    // núcleo nunca notó la diferencia — y bajar un cambio moría el ciclo entero.
+    if (desde !== hacia && (await this.datos.exists(hacia))) {
+      await this.datos.remove(hacia);
+    }
+
     await this.datos.rename(desde, hacia);
 
     // Nuestro publish: el temporal pasa a ser el destino con hash conocido.
