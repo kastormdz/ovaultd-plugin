@@ -80,31 +80,9 @@ Two different secrets, easy to confuse: the **account** password (which the serv
 
 Commands in the palette (Ctrl+P): *Probar conexión*, *Sincronizar ahora*, *Estado del motor*, *Exportar el vault a una carpeta…*, *Importar una carpeta al vault…*, *Resolver conflicto…*.
 
-## Development
+## Contributing
 
-```bash
-npm install
-npm run dev            # esbuild in watch mode → main.js
-npm run build          # typecheck (tsc -noEmit) + production build (with the anti-Node gate)
-```
-
-The plugin imports `@ovaultd/{core,crypto,protocol}` from `vendor/`, a **generated copy** of the
-monorepo's packages, so this repository builds on its own (clone it, `npm install`, `npm run
-build` — no sibling checkout needed). To pull the current core in:
-
-```bash
-node scripts/sincronizar-core.mjs   # clona el monorepo si no está al lado
-```
-
-Never edit `vendor/` by hand: changes go to the monorepo and come in through that script. The
-release workflow re-runs it and fails if the copy is stale, so a published plugin can never
-ship a different core than the one it was tested with.
-
-Sync is the risky part, so the loop for changes that touch it: build, copy to a real vault, and watch `motor.log` and the status bar — the engine is designed to be observed. The repository ships `docs/spike-eventos.md`, a measured report on how Obsidian's watcher actually behaves (external renames arrive as create+delete, dotfiles emit no events, content is stable by the time the event lands) — those measurements are what the engine is built on.
-
-## Leak gate
-
-Before every push: `scripts/scan-leaks.sh` (plus `.githooks/pre-commit`, activated with `git config core.hooksPath .githooks`). Personal patterns go in `scripts/leaks.local` (never versioned).
+Building the plugin, the vendored core, and the leak gate: [`docs/development.md`](docs/development.md).
 
 ## License
 
