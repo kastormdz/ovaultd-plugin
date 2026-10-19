@@ -6402,18 +6402,10 @@
     [".ovaultd-descartes", "copias de protecci\xF3n del modo espejo (locales, jam\xE1s se suben)"]
   ]);
   var CONFIG_PORTABLE = [
-    /^appearance(\.json)?$/,
-    // tema, tamaño de letra, acentos visuales
-    /^core-plugins\.json$/,
-    // qué plugins del núcleo están habilitados
-    /^hotkeys\.json$/,
-    // atajos de teclado (portables: no llevan rutas absolutas)
     /^snippets\/.+/,
     // CSS propio del vault
-    /^themes\/.+/,
-    // temas instalados como archivos
-    /^plugins\/[^/]+\/manifest\.json$/
-    // la identidad de cada plugin, NO su data.json
+    /^themes\/.+/
+    // temas instalados como archivos (contenido puro)
   ];
   function esConfigPortable(dentroDelConfig) {
     return CONFIG_PORTABLE.some((patron) => patron.test(dentroDelConfig));

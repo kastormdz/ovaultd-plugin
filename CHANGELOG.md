@@ -6,6 +6,18 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 (mismo `MAJOR.MINOR` = pareja probada junta; ver ADR-0018 y la sección «Compatibility» del
 README).
 
+## [0.2.26] — 2026-10-19
+
+### Fixed
+
+- **Se terminan las colisiones de config entre dispositivos**: `appearance.json`,
+  `core-plugins.json`, `hotkeys.json` y los manifests de plugins de terceros dejan de
+  sincronizarse. Obsidian los reescribe solo y cada dispositivo los tiene distinto (en
+  producción `appearance.json` acumuló 25 revisiones entre 3 equipos y, como un conflicto
+  aborta el ciclo, frenaba la sincronización de las notas). Siguen viajando `themes/*` y
+  `snippets/*`: el CSS es contenido.
+- Al actualizar, el tema activo y los atajos se eligen una vez por dispositivo.
+
 ## [0.2.25] — 2026-10-19
 
 ### Changed
