@@ -6,6 +6,17 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 (mismo `MAJOR.MINOR` = pareja probada junta; ver ADR-0018 y la sección «Compatibility» del
 README).
 
+## [0.2.17] — 2026-10-18
+
+### Fixed
+
+- **Fusión 3-vías: una inserción pegada al borde de un reemplazo ajeno ya no fusiona
+  artefactos.** El caso que cazó el corpus del núcleo: un lado edita `1` → `uno` y el otro
+  `1` → `1.0`; la fusión producía `uno.0` — un texto que nadie escribió. Ahora el borde
+  derecho INTERNO de un reemplazo cuenta como solapamiento (conflicto: se conservan ambas
+  versiones); el fin del documento sigue siendo adyacencia válida (reemplazo total +
+  agregado al final fusiona, como siempre). El vendor trae la misma corrección del núcleo.
+
 ## [0.2.16] — 2026-10-18
 
 ### Changed

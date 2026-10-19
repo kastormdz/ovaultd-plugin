@@ -64,8 +64,8 @@ function cambiosDe(dmp, base, texto) {
     cerrar();
     return cambios;
 }
-/** ¿Algún cambio de `a` se pisa con alguno de `b`? */
-function seSolapan(a, b) {
+/** ¿Algún cambio de `a` se pisa con alguno de `b`? `largoBase` distingue el fin del documento. */
+function seSolapan(a, b, largoBase) {
     for (const p of a) {
         for (const q of b) {
             const pEsPunto = p.inicio === p.fin;
@@ -77,12 +77,21 @@ function seSolapan(a, b) {
                 continue;
             }
             if (pEsPunto) {
+                // Dentro del cambio ajeno (borde izquierdo inclusive): se pisan.
                 if (p.inicio >= q.inicio && p.inicio < q.fin)
+                    return true;
+                // En el borde derecho INTERNO: el ancla de la inserción (lo que venía "después")
+                // fue reemplazada por el otro lado — fusionar ahí mezcla artefactos que nadie
+                // escribió ("1"→"uno" + "1"→"1.0" daba "uno.0"). En el FIN del documento sí es
+                // adyacencia válida (el reemplazo total + agregado al final, decisión del plan).
+                if (p.inicio === q.fin && p.inicio < largoBase)
                     return true;
                 continue;
             }
             if (qEsPunto) {
                 if (q.inicio >= p.inicio && q.inicio < p.fin)
+                    return true;
+                if (q.inicio === p.fin && q.inicio < largoBase)
                     return true;
                 continue;
             }
@@ -112,7 +121,7 @@ export function mergeDeTexto(base, ours, theirs) {
         return { tipo: 'merge', texto: theirs };
     if (cambiosTheirs.length === 0)
         return { tipo: 'merge', texto: ours };
-    if (seSolapan(cambiosOurs, cambiosTheirs))
+    if (seSolapan(cambiosOurs, cambiosTheirs, base.length))
         return { tipo: 'conflicto' };
     // Disjuntos: se recorren los cambios de los dos lados sobre la base y se arma la fusión.
     // Determinístico — no hay lugar donde el fuzzy pueda "elegir" ni dejar un resultado parcial.

@@ -5838,7 +5838,7 @@
     cerrar();
     return cambios;
   }
-  function seSolapan(a, b) {
+  function seSolapan(a, b, largoBase) {
     for (const p of a) {
       for (const q of b) {
         const pEsPunto = p.inicio === p.fin;
@@ -5849,10 +5849,12 @@
         }
         if (pEsPunto) {
           if (p.inicio >= q.inicio && p.inicio < q.fin) return true;
+          if (p.inicio === q.fin && p.inicio < largoBase) return true;
           continue;
         }
         if (qEsPunto) {
           if (q.inicio >= p.inicio && q.inicio < p.fin) return true;
+          if (q.inicio === p.fin && q.inicio < largoBase) return true;
           continue;
         }
         if (p.inicio < q.fin && q.inicio < p.fin) return true;
@@ -5869,7 +5871,7 @@
     const cambiosTheirs = cambiosDe(dmp, base, theirs);
     if (cambiosOurs.length === 0) return { tipo: "merge", texto: theirs };
     if (cambiosTheirs.length === 0) return { tipo: "merge", texto: ours };
-    if (seSolapan(cambiosOurs, cambiosTheirs)) return { tipo: "conflicto" };
+    if (seSolapan(cambiosOurs, cambiosTheirs, base.length)) return { tipo: "conflicto" };
     const todos = [...cambiosOurs, ...cambiosTheirs].sort((a, b) => a.inicio - b.inicio);
     let fusionado = "";
     let cursor = 0;
