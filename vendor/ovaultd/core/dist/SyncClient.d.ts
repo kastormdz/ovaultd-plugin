@@ -43,6 +43,8 @@ export interface SyncCycleDeps {
      * pull deja el estado local al día y lo que no vino del server se queda acá.
      */
     modo?: ModoDeSync;
+    /** Nombre del dispositivo, para el sello de las copias de conflicto del pull. */
+    deviceName?: string;
 }
 export interface ConflictoDeSync {
     tipo: 'pull-bloqueado' | 'push-conflicto' | 'resync';

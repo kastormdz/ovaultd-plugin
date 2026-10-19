@@ -24,6 +24,7 @@ export async function correrCiclo(deps) {
         store,
         port,
         keys,
+        deviceName: deps.deviceName,
         forzar: deps.modo === 'mirror-remote',
     });
     if (pull.status === 'resync-required') {

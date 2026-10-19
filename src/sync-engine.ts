@@ -908,6 +908,8 @@ export class MotorDeSync {
           vaultUuid: this.vaultUuidBytes!,
           epoch: this.estadoLocal?.vault.epoch ?? 1,
           modo: this.modoDeSync,
+          // Sello de las copias de conflicto: el mismo nombre que ve el panel de devices.
+          deviceName: identidadDelDispositivo().name,
         });
       } while (this.sucio);
 

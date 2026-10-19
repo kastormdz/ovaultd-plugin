@@ -43,18 +43,39 @@ export interface ApplyDeps {
      * pull la pasa siempre. Se usa SOLO para bajar el blob de la revisión base del CAS.
      */
     conn?: SyncConnection;
+    /**
+     * Nombre del dispositivo, para el sello de las copias de conflicto
+     * (`Nota (conflicto <dispositivo> <fecha>).md`, el patrón de Obsidian Sync).
+     */
+    deviceName?: string;
+    /**
+     * Qué hacer con un conflicto de CONTENIDO (el equivalente al `conflictAction` de
+     * Obsidian Sync):
+     *  - `conservar` (default): el remoto va al path y el local a una copia; el ciclo sigue.
+     *  - `bloquear`: deja la intención bloqueada para resolución manual (como antes).
+     * Los conflictos estructurales bloquean siempre.
+     */
+    politicaDeConflictos?: 'conservar' | 'bloquear';
 }
-export type ApplyStatus = 'applied' | 'merged' | 'blocked' | 'noop';
+export type ApplyStatus = 'applied' | 'merged' | 'conflicted-copy' | 'blocked' | 'noop';
 export interface ApplyOutcome {
     status: ApplyStatus;
     intentId: string;
     reason?: string;
+    /** Path de la copia con el contenido local, cuando el conflicto se conservó. */
+    copia?: string;
 }
 export interface RecoveryReport {
     completed: number;
     cleaned: number;
     blocked: number;
 }
+/**
+ * Ruta de la copia de conflicto, con el patrón de Obsidian Sync:
+ * `Nota (conflicto juno 202610191545).md` — sello `YYYYMMDDHHMM` (12 dígitos) y nombre de
+ * dispositivo saneado. Sin extensión o en subcarpeta también funciona.
+ */
+export declare function pathDeCopiaDeConflicto(ruta: string, dispositivo: string, cuando?: Date, sufijo?: number): string;
 /** Aplica una revisión remota. `stored` es el blob almacenado (nonce incluido) o null. */
 export declare function applyRevision(deps: ApplyDeps, revision: ApplyRevision, stored: Uint8Array | null, 
 /** `forzar`: la resolución explícita del usuario pisa un bloqueo de tercera versión

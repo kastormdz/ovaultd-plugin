@@ -5934,6 +5934,39 @@
 
   // src/apply-runner.ts
   var sha256Hex = (bytes) => toHex(cryptoProvider().sha256(bytes));
+  function pathDeCopiaDeConflicto(ruta, dispositivo, cuando = /* @__PURE__ */ new Date(), sufijo = 0) {
+    const barra = ruta.lastIndexOf("/");
+    const dir = barra >= 0 ? ruta.slice(0, barra + 1) : "";
+    const nombre = ruta.slice(barra + 1);
+    const punto = nombre.lastIndexOf(".");
+    const base = punto > 0 ? nombre.slice(0, punto) : nombre;
+    const extension = punto > 0 ? nombre.slice(punto) : "";
+    const sello = cuando.toISOString().replace(/[-:T]/g, "").slice(0, 12);
+    const limpio = dispositivo.replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24);
+    const quien = limpio.length > 0 ? limpio : "dispositivo";
+    const extra = sufijo > 0 ? `-${sufijo}` : "";
+    return `${dir}${base} (conflicto ${quien} ${sello}${extra})${extension}`;
+  }
+  function esConflictoConservable(motivo) {
+    return motivo === "hay una edici\xF3n local posterior a la base" || motivo === "existe localmente y no hay base (dos creaciones)";
+  }
+  async function conservarLocalComoCopia(deps, ruta) {
+    try {
+      const actual = await deps.port.stat(ruta);
+      if (!actual?.isFile) return null;
+      const bytes = await deps.port.read(ruta);
+      let destino = pathDeCopiaDeConflicto(ruta, deps.deviceName ?? "dispositivo");
+      for (let n = 2; n < 50; n += 1) {
+        if (!await deps.port.stat(destino)) break;
+        destino = pathDeCopiaDeConflicto(ruta, deps.deviceName ?? "dispositivo", /* @__PURE__ */ new Date(), n);
+      }
+      const { tempName } = await deps.port.writeTemp(dirVault(destino), bytes);
+      await deps.port.rename(tempName, destino);
+      return destino;
+    } catch {
+      return null;
+    }
+  }
   var dirVault = (path) => {
     const corte = path.lastIndexOf("/");
     return corte < 0 ? "." : path.slice(0, corte);
@@ -6055,15 +6088,21 @@
     }
     const guard = await evaluarGuard(deps, revision, hashVerificado);
     let verdict = guard.verdict;
+    let copiaDeConflicto = null;
     if (guard.verdict === "blocked") {
       if (opciones.forzar !== true) {
         const fusion = await intentarFusionar(deps, revision, plaintext, hashVerificado, guard.reason);
         if (fusion !== null) {
           return publicarFusion(deps, intent, revision, fusion);
         }
-        intent = { ...intent, state: "blocked", reason: guard.reason };
-        await store2.putIntent(intent);
-        return { status: "blocked", intentId: intent.intentId, reason: guard.reason };
+        if (esConflictoConservable(guard.reason) && (deps.politicaDeConflictos ?? "conservar") === "conservar") {
+          copiaDeConflicto = await conservarLocalComoCopia(deps, revision.path);
+        }
+        if (copiaDeConflicto === null) {
+          intent = { ...intent, state: "blocked", reason: guard.reason };
+          await store2.putIntent(intent);
+          return { status: "blocked", intentId: intent.intentId, reason: guard.reason };
+        }
       }
       verdict = "safe";
     }
@@ -6125,7 +6164,7 @@
       },
       checkpoint: { since: revision.rev, minRev: null }
     });
-    return { status: "applied", intentId: intent.intentId };
+    return copiaDeConflicto !== null ? { status: "conflicted-copy", intentId: intent.intentId, copia: copiaDeConflicto } : { status: "applied", intentId: intent.intentId };
   }
   async function commitDesdeIntento(deps, intent) {
     const { store: store2, port } = deps;
@@ -7162,6 +7201,7 @@
       store: store2,
       port,
       keys,
+      deviceName: deps.deviceName,
       forzar: deps.modo === "mirror-remote"
     });
     if (pull.status === "resync-required") {
@@ -7648,6 +7688,7 @@
     return store;
   };
   var applyKeys = null;
+  var applyDeviceName = null;
   var exigirApply = () => {
     if (!applyKeys) throw new Error("apply: falta apply.configure (subclaves del vault)");
     return { store: exigirStore(), keys: applyKeys };
@@ -7777,6 +7818,9 @@
         keys[nombre] = fromHex(valor);
       }
       applyKeys = keys;
+      if (typeof params.deviceName === "string" && params.deviceName.trim().length > 0) {
+        applyDeviceName = params.deviceName.trim().slice(0, 64);
+      }
       return { configured: true, subclaves: subclaves.length };
     },
     "apply.run": async (params) => {
@@ -7785,7 +7829,12 @@
       if (!revision || typeof revision !== "object") throw new Error("apply.run: falta revision");
       const stored = typeof params.storedB64 === "string" ? b64Decode(params.storedB64) : null;
       return applyRevision(
-        { store: store2, port: new HttpFileSystemPort(globalThis.location.origin), keys },
+        {
+          store: store2,
+          port: new HttpFileSystemPort(globalThis.location.origin),
+          keys,
+          deviceName: applyDeviceName ?? void 0
+        },
         revision,
         stored
       );
@@ -7795,7 +7844,8 @@
       return recoverApplies({
         store: store2,
         port: new HttpFileSystemPort(globalThis.location.origin),
-        keys
+        keys,
+        deviceName: applyDeviceName ?? void 0
       });
     },
     // ------------------------------------------------------------------ sync (corte 4)
@@ -7851,7 +7901,8 @@
       return pullOnce(syncConn, {
         store: store2,
         port: new HttpFileSystemPort(globalThis.location.origin),
-        keys
+        keys,
+        deviceName: applyDeviceName ?? void 0
       });
     },
     /** Escaneo + hash-diff sin tocar la red (lo que muestra `list-local`). */

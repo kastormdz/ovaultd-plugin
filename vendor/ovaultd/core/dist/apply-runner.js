@@ -21,6 +21,60 @@ import { createIntent } from './apply.js';
 import { esMergeablePorTipo, mergeDeTexto } from './merge.js';
 import { colisionDeCase, nombreBase, validarRutaDeVault } from './vault-path.js';
 const sha256Hex = (bytes) => toHex(cryptoProvider().sha256(bytes));
+/**
+ * Ruta de la copia de conflicto, con el patrón de Obsidian Sync:
+ * `Nota (conflicto juno 202610191545).md` — sello `YYYYMMDDHHMM` (12 dígitos) y nombre de
+ * dispositivo saneado. Sin extensión o en subcarpeta también funciona.
+ */
+export function pathDeCopiaDeConflicto(ruta, dispositivo, cuando = new Date(), sufijo = 0) {
+    const barra = ruta.lastIndexOf('/');
+    const dir = barra >= 0 ? ruta.slice(0, barra + 1) : '';
+    const nombre = ruta.slice(barra + 1);
+    const punto = nombre.lastIndexOf('.');
+    const base = punto > 0 ? nombre.slice(0, punto) : nombre;
+    const extension = punto > 0 ? nombre.slice(punto) : '';
+    const sello = cuando.toISOString().replace(/[-:T]/g, '').slice(0, 12);
+    const limpio = dispositivo.replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24);
+    const quien = limpio.length > 0 ? limpio : 'dispositivo';
+    const extra = sufijo > 0 ? `-${sufijo}` : '';
+    return `${dir}${base} (conflicto ${quien} ${sello}${extra})${extension}`;
+}
+/**
+ * Motivos del guard que se resuelven CONSERVANDO AMBOS (el remoto en el path, el local en
+ * una copia), como hace Obsidian Sync. Los estructurales (directorio en el camino, ruta
+ * inválida) y el borrado remoto contra un local editado siguen bloqueando: automatizar un
+ * borrado o pisar un directorio no es seguro.
+ */
+function esConflictoConservable(motivo) {
+    return (motivo === 'hay una edición local posterior a la base' ||
+        motivo === 'existe localmente y no hay base (dos creaciones)');
+}
+/**
+ * Copia el contenido local a `pathDeCopiaDeConflicto(...)` y devuelve el path de la copia
+ * (o null si no se pudo: el llamador cae al bloqueo explícito de siempre). La copia es un
+ * archivo NUEVO: el escaneo siguiente la sube como `add`, así que ambos contenidos quedan
+ * en el server y visibles desde todos los dispositivos.
+ */
+async function conservarLocalComoCopia(deps, ruta) {
+    try {
+        const actual = await deps.port.stat(ruta);
+        if (!actual?.isFile)
+            return null;
+        const bytes = await deps.port.read(ruta);
+        let destino = pathDeCopiaDeConflicto(ruta, deps.deviceName ?? 'dispositivo');
+        for (let n = 2; n < 50; n += 1) {
+            if (!(await deps.port.stat(destino)))
+                break;
+            destino = pathDeCopiaDeConflicto(ruta, deps.deviceName ?? 'dispositivo', new Date(), n);
+        }
+        const { tempName } = await deps.port.writeTemp(dirVault(destino), bytes);
+        await deps.port.rename(tempName, destino);
+        return destino;
+    }
+    catch {
+        return null;
+    }
+}
 const dirVault = (path) => {
     const corte = path.lastIndexOf('/');
     return corte < 0 ? '.' : path.slice(0, corte);
@@ -206,6 +260,7 @@ opciones = {}) {
     // versión se convierte en una escritura DELIBERADA (la resolución explícita del usuario).
     const guard = await evaluarGuard(deps, revision, hashVerificado);
     let verdict = guard.verdict;
+    let copiaDeConflicto = null;
     if (guard.verdict === 'blocked') {
         if (opciones.forzar !== true) {
             // Antes de declarar el conflicto: si es texto y las ediciones NO se pisan, se
@@ -215,9 +270,18 @@ opciones = {}) {
             if (fusion !== null) {
                 return publicarFusion(deps, intent, revision, fusion);
             }
-            intent = { ...intent, state: 'blocked', reason: guard.reason };
-            await store.putIntent(intent);
-            return { status: 'blocked', intentId: intent.intentId, reason: guard.reason };
+            // Fallback con el patrón de Obsidian Sync: el conflicto de CONTENIDO se conserva
+            // (el remoto va al path original, el local a `<nombre> (conflicto <device> <fecha>)`)
+            // y el ciclo SIGUE. Antes se bloqueaba y se congelaba la sync entera.
+            if (esConflictoConservable(guard.reason) && (deps.politicaDeConflictos ?? 'conservar') === 'conservar') {
+                copiaDeConflicto = await conservarLocalComoCopia(deps, revision.path);
+            }
+            if (copiaDeConflicto === null) {
+                // Estructural (directorio en el camino, etc.) o no se pudo copiar: bloqueo explícito.
+                intent = { ...intent, state: 'blocked', reason: guard.reason };
+                await store.putIntent(intent);
+                return { status: 'blocked', intentId: intent.intentId, reason: guard.reason };
+            }
         }
         verdict = 'safe';
     }
@@ -289,7 +353,9 @@ opciones = {}) {
         },
         checkpoint: { since: revision.rev, minRev: null },
     });
-    return { status: 'applied', intentId: intent.intentId };
+    return copiaDeConflicto !== null
+        ? { status: 'conflicted-copy', intentId: intent.intentId, copia: copiaDeConflicto }
+        : { status: 'applied', intentId: intent.intentId };
 }
 /** Commit de una intención ya publicada (la usan `applyRevision` y la recuperación). */
 async function commitDesdeIntento(deps, intent) {
