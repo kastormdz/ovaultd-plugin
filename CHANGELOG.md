@@ -6,6 +6,18 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 (mismo `MAJOR.MINOR` = pareja probada junta; ver ADR-0018 y la sección «Compatibility» del
 README).
 
+## [0.2.16] — 2026-10-18
+
+### Changed
+
+- **`community-plugins.json` y el manifest del propio plugin dejan de sincronizarse.** La
+  lista de plugins habilitados depende de qué plugins están INSTALADOS en cada dispositivo:
+  sincronizarla solo traía conflictos de bajo valor (cada toggle la reescribe y el orden
+  cambia). El manifest propio tampoco viaja: su versión la mueve la tienda en cada
+  dispositivo — el sincronizado hacía que un dispositivo «mintiera» su versión. Lo demás de
+  la config portable sigue igual: `appearance.json`, `themes/*`, `snippets/*`, `hotkeys.json`,
+  `core-plugins.json` y los manifests de plugins de terceros.
+
 ## [0.2.15] — 2026-10-18
 
 ### Added

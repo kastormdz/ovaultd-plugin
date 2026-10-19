@@ -6362,6 +6362,7 @@
 
   // src/SyncFilter.ts
   var PREFIJO_TEMPORAL = ".ovaultd-tmp-";
+  var ID_DEL_PLUGIN_DE_SYNC = "ovaultd";
   var CARPETAS_VETADAS = /* @__PURE__ */ new Map([
     [".trash", "papelera local del vault"],
     [".git", "repositorio git anidado"],
@@ -6370,8 +6371,6 @@
   var CONFIG_PORTABLE = [
     /^appearance(\.json)?$/,
     // tema, tamaño de letra, acentos visuales
-    /^community-plugins\.json$/,
-    // qué plugins de la comunidad están habilitados
     /^core-plugins\.json$/,
     // qué plugins del núcleo están habilitados
     /^hotkeys\.json$/,
@@ -6409,6 +6408,9 @@
     if (i !== -1) {
       const dentro = segmentos.slice(i + 1).join("/");
       if (esContenedorDeConfig(dentro)) return null;
+      if (dentro === `plugins/${ID_DEL_PLUGIN_DE_SYNC}/manifest.json`) {
+        return "manifest del plugin de sync (lo actualiza la tienda en cada dispositivo)";
+      }
       return esConfigPortable(dentro) ? null : "configuraci\xF3n del vault (fuera de la lista blanca)";
     }
     return null;
