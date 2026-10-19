@@ -12,3 +12,29 @@
 export const ventana: Window = (
   typeof window !== 'undefined' ? window : globalThis
 ) as unknown as Window;
+
+/**
+ * Cómo se identifica ESTE dispositivo ante el server (signin).
+ *
+ * El panel del server lista los devices por nombre: con un literal («obsidian») todos los
+ * equipos se ven iguales y no se sabe cuál revocar. En Electron el hostname del SO es la
+ * etiqueta útil; en móvil no hay `require`, así que queda un nombre fijo distinguible.
+ * `require` es DINÁMICO (igual que el export/import): el bundle móvil no debe ver imports
+ * estáticos de node.
+ */
+export function identidadDelDispositivo(): { name: string; platform: string } {
+  try {
+    const requerir = (ventana as unknown as { require?: (modulo: string) => unknown }).require;
+    if (typeof requerir === 'function') {
+      const os = requerir('node:os') as { hostname?: () => string; platform?: () => string };
+      const hostname = os.hostname?.();
+      const plataforma = os.platform?.();
+      if (typeof hostname === 'string' && hostname.trim() !== '') {
+        return { name: hostname.trim(), platform: plataforma ?? 'desconocida' };
+      }
+    }
+  } catch {
+    // sin puente de node (móvil): cae al nombre fijo de abajo
+  }
+  return { name: 'Obsidian móvil', platform: 'movil' };
+}

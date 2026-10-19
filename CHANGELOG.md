@@ -6,6 +6,17 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 (mismo `MAJOR.MINOR` = pareja probada junta; ver ADR-0018 y la sección «Compatibility» del
 README).
 
+## [0.2.18] — 2026-10-19
+
+### Fixed
+
+- **El dispositivo se presenta con el hostname de la máquina**
+  (`entorno.ts::identidadDelDispositivo`): antes el registro mandaba `name` y `platform` =
+  `"obsidian"` para todos, y el panel del server listaba filas idénticas imposibles de
+  distinguir. Ahora viaja el hostname real (`yavin`, `juno`, …) y la plataforma del SO; en
+  móvil, donde no hay `require`, queda un nombre fijo distinguible («Obsidian móvil»). El
+  `require` sigue siendo dinámico: el bundle móvil no ve imports estáticos de node.
+
 ## [0.2.17] — 2026-10-18
 
 ### Fixed

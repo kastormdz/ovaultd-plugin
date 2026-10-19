@@ -25,7 +25,7 @@ import {
   type MetaDelServer,
   type Veredicto,
 } from './compat';
-import { ventana } from './entorno';
+import { identidadDelDispositivo, ventana } from './entorno';
 import { dirDelPlugin } from './rutas';
 
 import {
@@ -276,8 +276,10 @@ export class MotorDeSync {
         cuerpo: {
           email: opciones.email,
           password: opciones.passwordCuenta,
-          name: 'obsidian',
-          platform: 'obsidian',
+          // El panel del server lista los devices por nombre: el hostname distingue una
+          // máquina de otra (con un literal, todos los devices se ven iguales y no se
+          // sabe cuál revocar).
+          ...identidadDelDispositivo(),
         },
       },
     );

@@ -141,12 +141,16 @@ describe('crear vault desde el plugin', () => {
 
     // 1) Las credenciales de cuenta viajan SOLO al login (una vez).
     const signin = pedidos.find((p) => p.url.endsWith('/api/v1/auth/signin'));
-    expect(JSON.parse(String(signin?.init?.body))).toMatchObject({
+    const signinBody = JSON.parse(String(signin?.init?.body)) as Record<string, unknown>;
+    expect(signinBody).toMatchObject({
       email: 'quien@ejemplo.com',
       password: 'password-de-prueba',
-      name: 'obsidian',
-      platform: 'obsidian',
     });
+    // El device se identifica con el hostname de la máquina (o un nombre fijo en móvil):
+    // jamás con el literal "obsidian", que hacía indistinguibles todos los equipos en el
+    // panel de devices del server.
+    expect(signinBody.name).not.toBe('obsidian');
+    expect(signinBody.platform).not.toBe('obsidian');
 
     // 2) El alta: material público con el token del device, sin rastros de secretos.
     const alta = pedidos.find((p) => p.url.endsWith('/api/v1/vaults'));
