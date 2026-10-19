@@ -5954,7 +5954,6 @@
       return { verdict: "blocked", reason: "borrado remoto contra contenido local distinto de la base" };
     }
     if (!actual) {
-      if (base) return { verdict: "blocked", reason: "el archivo local desapareci\xF3 respecto de la base" };
       return { verdict: "safe" };
     }
     if (actual.isDirectory) return { verdict: "blocked", reason: "un directorio local ocupa el camino" };

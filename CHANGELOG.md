@@ -6,6 +6,17 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 (mismo `MAJOR.MINOR` = pareja probada junta; ver ADR-0018 y la sección «Compatibility» del
 README).
 
+## [0.2.27] — 2026-10-19
+
+### Fixed
+
+- **Un archivo que ya no está en disco deja de congelar la sincronización**: si la base
+  conoce un path y el archivo no existe (un theme borrado a mano, una config que Obsidian
+  limpió), el pull escribía un conflicto y abortaba el ciclo ENTERO, reintentando cada 30
+  segundos para siempre. Ahora baja la versión del server; si el archivo no lo querés, al
+  borrarlo se propaga como borrado. Este era el conflicto que dejaba las notas sin
+  sincronizar en escritorio y teléfono.
+
 ## [0.2.26] — 2026-10-19
 
 ### Fixed
