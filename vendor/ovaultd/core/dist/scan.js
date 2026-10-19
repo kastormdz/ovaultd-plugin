@@ -19,7 +19,10 @@ import { cryptoProvider, pathId as calcularPathId } from '@ovaultd/crypto';
 import { toHex } from '@ovaultd/protocol';
 import { estaExcluido } from './SyncFilter.js';
 /** Recorre el vault completo (recursivo) y devuelve los archivos con su hash. */
-export async function escanearVault(port, keys, dir = '', cache) {
+export async function escanearVault(port, keys, dir = '', cache, 
+/** Si se pasa, el escaneo deja acá los bytes leídos: el push los reusa para encolar el
+ *  snapshot en vez de volver a pedir cada archivo al puente (una lectura por archivo). */
+contenidos) {
     const archivos = [];
     const recorrer = async (relDir) => {
         // El puente rechaza '' (frontera estricta): la raíz del vault se pide como '.'.
@@ -83,14 +86,19 @@ export async function escanearVault(port, keys, dir = '', cache) {
             const blobs = await port.readMany(lote.map((pendiente) => pendiente.rel));
             for (let j = 0; j < lote.length; j += 1) {
                 const bytes = blobs[j];
-                if (bytes)
+                if (bytes) {
                     leidos.set(lote[j].rel, bytes);
+                    contenidos?.set(lote[j].rel, bytes);
+                }
             }
         }
     }
     else {
-        for (const { rel } of porLeer)
-            leidos.set(rel, await port.read(rel));
+        for (const { rel } of porLeer) {
+            const bytes = await port.read(rel);
+            leidos.set(rel, bytes);
+            contenidos?.set(rel, bytes);
+        }
     }
     for (const { rel, stat } of porLeer) {
         const bytes = leidos.get(rel);

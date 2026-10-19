@@ -43,7 +43,10 @@ export declare function escanearVault(port: FileSystemPort, keys: SubKeys, dir?:
     mtime: number | null;
     size: number | null;
     contentHash: string | null;
-}>): Promise<EntradaEscaneada[]>;
+}>, 
+/** Si se pasa, el escaneo deja acá los bytes leídos: el push los reusa para encolar el
+ *  snapshot en vez de volver a pedir cada archivo al puente (una lectura por archivo). */
+contenidos?: Map<string, Uint8Array>): Promise<EntradaEscaneada[]>;
 /** Diff contra la base: qué falta empujar, con la outbox pendiente como filtro. */
 export declare function diffLocal(store: StateStore, entradas: EntradaEscaneada[]): Promise<DiffLocal>;
 /** Resumen humano del diff (lo usan `list-local` y los reportes de sync). */

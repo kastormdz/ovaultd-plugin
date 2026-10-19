@@ -29,7 +29,7 @@ const CERO64 = new Uint8Array(64);
  * Ops por batch. El server acepta hasta MAX_BATCH_OPS (1000); 50 mantiene los lotes
  * chicos (un conflicto aisla menos trabajo) sin perder la ganancia de round-trips.
  */
-const TAMANO_LOTE = 50;
+const TAMANO_LOTE = 250;
 /** Parte una lista en lotes de a lo sumo `tamano`. */
 function enLotes(items, tamano) {
     const lotes = [];
@@ -57,8 +57,13 @@ async function encolarDiff(deps, head) {
         entrada.path ?? '',
         { mtime: entrada.mtime ?? null, size: entrada.size ?? null, contentHash: entrada.contentHash ?? null },
     ]));
-    const entradas = await escanearVault(port, keys, '', cache);
+    const contenidos = new Map();
+    const tScan = performance.now();
+    const entradas = await escanearVault(port, keys, '', cache, contenidos);
+    marcarFase('scan', performance.now() - tScan);
+    const tDiff = performance.now();
     const diffBase = await diffLocal(store, entradas);
+    marcarFase('diff', performance.now() - tDiff);
     // Un cliente VACÍO no borra el remoto (aceptación de fase 3): sin un solo archivo en
     // disco, los deletes del diff no son una intención — se bloquean y se informan.
     const deletesBloqueados = entradas.length === 0 ? diffBase.borrados.length : 0;
@@ -69,13 +74,23 @@ async function encolarDiff(deps, head) {
     let encoladas = 0;
     const encolar = async (entry) => {
         // Idempotencia por payload: el MISMO cambio no duplica la operación.
-        if (await store.getOutbox(entry.operationId))
+        const tGet = performance.now();
+        const yaEsta = await store.getOutbox(entry.operationId);
+        marcarFase('getOutbox', performance.now() - tGet);
+        if (yaEsta)
             return;
+        const tEncolar = performance.now();
         await store.putOutbox(entry);
+        marcarFase('encolar', performance.now() - tEncolar);
         encoladas += 1;
     };
     for (const archivo of diff.nuevos) {
-        const bytes = await port.read(archivo.path);
+        // Los bytes YA vienen del escaneo (readMany): no se vuelve a pedir el archivo al
+        // puente. El Map se vacía a medida que se consume para no retener el vault entero.
+        const tLeer = performance.now();
+        const bytes = contenidos.get(archivo.path) ?? (await port.read(archivo.path));
+        contenidos.delete(archivo.path);
+        marcarFase('leer', performance.now() - tLeer);
         await encolar(prepareOutboxEntry({
             kind: 'add',
             path: archivo.path,
@@ -87,7 +102,10 @@ async function encolarDiff(deps, head) {
         }));
     }
     for (const archivo of diff.modificados) {
-        const bytes = await port.read(archivo.path);
+        const tLeer = performance.now();
+        const bytes = contenidos.get(archivo.path) ?? (await port.read(archivo.path));
+        contenidos.delete(archivo.path);
+        marcarFase('leer', performance.now() - tLeer);
         await encolar(prepareOutboxEntry({
             kind: 'mod',
             path: archivo.path,
@@ -143,12 +161,16 @@ operationId) {
         if (real !== entry.snapshotHash) {
             throw new Error(`snapshot corrupto en ${entry.operationId} (declarado ${entry.snapshotHash}, real ${real})`);
         }
+        const tPrep = performance.now();
         const almacenado = encryptBlob(keys, plano);
         const idBytes = blobIdDe(almacenado);
         blobIdHex = toHex(idBytes);
         blobIdBytes = idBytes;
         tamano = plano.length;
+        marcarFase('preparar', performance.now() - tPrep);
+        const tPut = performance.now();
         await conn.putBlob(blobIdHex, almacenado);
+        marcarFase('put', performance.now() - tPut);
     }
     const tmacBytes = esDel ? CERO64 : tMac(identidad, vaultUuid, pathIdBytes, blobIdBytes, epoch);
     const sig = signRecord(identidad, pathIdBytes, blobIdBytes, tmacBytes, signOpCode(entry.kind), tamano, 
@@ -180,10 +202,11 @@ async function confirmar(deps, entry, rev, blobIdHex) {
         blobId: esDel ? null : blobIdHex,
         contentHash: esDel ? null : (entry.snapshotHash ?? null),
     });
-    const indice = await store.getIndex(entry.pathId);
+    // El path ya viene en la entrada (lo puso el diff): solo se consulta el índice si falta.
+    const path = entry.path ?? (await store.getIndex(entry.pathId))?.path;
     await store.putIndex({
         pathId: entry.pathId,
-        path: entry.path ?? indice?.path,
+        path,
         kind: 'file',
         deleted: esDel,
         rev,
@@ -196,23 +219,65 @@ async function confirmar(deps, entry, rev, blobIdHex) {
     });
     await store.setOutboxState(entry.operationId, 'confirmed');
     await store.deleteOutbox(entry.operationId);
-    // La revisión quedó reconciliada: el disco YA la refleja (la subimos nosotros) y el CAS
-    // garantiza que no salteamos revisiones ajenas (si otro device hubiera commiteado entre
-    // medio, el ack habría sido un conflicto). El checkpoint avanza acá TAMBIÉN: si solo
-    // avanzara por `completeApply`, el próximo push usaría una base vieja y chocaría contra
-    // nuestras PROPIAS revisiones.
-    const minRev = (await store.readCheckpoint().catch(() => null))?.minRev ?? null;
-    await store.writeCheckpoint({ since: rev, minRev, updatedAt: Date.now() });
+    // El checkpoint lo escribe el LOTE (una vez, con el rev del ack): escribirlo por entrada
+    // era un read + un write de IndexedDB por nota sin aportar nada.
 }
 /** Una pasada de subida: escanear → encolar → drenar. No reconecta (eso es del llamador). */
+/**
+ * Tandas con concurrencia ACOTADA. Con 50 PUT de 133 KB en vuelo, el puente (un solo
+ * proceso node que reenvía cada request) y el navegador se ahogan: medido 330 ms por PUT
+ * contra 6 ms del server. Ocho en vuelo mantienen el pipelining sin saturar al que media.
+ */
+const CONCURRENCIA_PUT = 16;
+async function enTandas(items, limite, fn) {
+    const resultado = new Array(items.length);
+    let siguiente = 0;
+    const trabajadores = Array.from({ length: Math.min(limite, items.length) }, async () => {
+        for (;;) {
+            const i = siguiente;
+            siguiente += 1;
+            if (i >= items.length)
+                return;
+            resultado[i] = await fn(items[i]);
+        }
+    });
+    await Promise.all(trabajadores);
+    return resultado;
+}
+/**
+ * Instrumentación de fases del push (solo diagnóstico): acumula milisegundos por etapa y
+ * al final del ciclo los manda al puente, que los imprime en el stderr del CLI. Sirve
+ * para decidir con números dónde está el costo, no por módulo.
+ */
+const FASES = {
+    scan: 0,
+    diff: 0,
+    leer: 0,
+    encolar: 0,
+    preparar: 0,
+    commit: 0,
+    put: 0,
+    listOutbox: 0,
+    getOutbox: 0,
+    confirmar: 0,
+    total: 0,
+};
+function marcarFase(nombre, ms) {
+    FASES[nombre] += ms;
+}
 export async function pushOnce(deps) {
+    for (const clave of Object.keys(FASES))
+        FASES[clave] = 0;
+    const t0Total = performance.now();
     const { store } = deps;
     let head = (await store.readCheckpoint().catch(() => null))?.since ?? 0;
     const { diff, encoladas, deletesBloqueados } = await encolarDiff(deps, head);
     let empujadas = 0;
+    const tLista = performance.now();
     const pendientes = (await store.listOutbox())
         .filter((entry) => entry.state !== 'confirmed')
         .sort((a, b) => a.queuedAt - b.queuedAt);
+    marcarFase('listOutbox', performance.now() - tLista);
     /**
      * Sube un grupo de operaciones en UN batch (el server valida `expected_rev` una sola vez
      * para todo el lote y asigna las revisiones consecutivas: sigue habiendo UNA por op, así
@@ -225,7 +290,7 @@ export async function pushOnce(deps) {
         // (el de la primera entrada — estable, así el retry de un lote es idempotente).
         const operationIdDelLote = lote[0].operationId;
         const operacionDelLote = operacionBytes(operationIdDelLote);
-        const construidas = await Promise.all(lote.map((entry) => construirOp(deps, entry, head, operacionDelLote)));
+        const construidas = await enTandas(lote, CONCURRENCIA_PUT, (entry) => construirOp(deps, entry, head, operacionDelLote));
         const batch = {
             t: 'batch',
             batch_id: bytesToUuid(cryptoProvider().randomBytes(16)),
@@ -237,13 +302,24 @@ export async function pushOnce(deps) {
         // en `sent` y el reintento reusa la MISMA operación (idempotente).
         for (const entry of lote)
             await store.setOutboxState(entry.operationId, 'sent');
+        const tCommit = performance.now();
         const ack = await deps.conn.commit(batch);
+        marcarFase('commit', performance.now() - tCommit);
         // Una revisión POR LOTE (no por op): el server agrupa las ops del batch bajo la misma
         // rev (el modelo del restore masivo: "comparte batch_id y revisión"). Todas las
         // entradas se confirman con `ack.rev`; el head avanza una sola vez.
+        const tConfirmar = performance.now();
         for (let i = 0; i < lote.length; i += 1) {
             await confirmar(deps, lote[i], ack.rev, construidas[i].blobIdHex);
         }
+        marcarFase('confirmar', performance.now() - tConfirmar);
+        // La revisión quedó reconciliada: el disco YA la refleja (la subimos nosotros) y el CAS
+        // garantiza que no salteamos revisiones ajenas (si otro device hubiera commiteado entre
+        // medio, el ack habría sido un conflicto). El checkpoint avanza acá TAMBIÉN: si solo
+        // avanzara por `completeApply`, el próximo push usaría una base vieja y chocaría contra
+        // nuestras PROPIAS revisiones. Una escritura por LOTE, no por entrada.
+        const minRev = (await store.readCheckpoint().catch(() => null))?.minRev ?? null;
+        await store.writeCheckpoint({ since: ack.rev, minRev, updatedAt: Date.now() });
         head = ack.rev;
         empujadas += lote.length;
     };
@@ -281,6 +357,20 @@ export async function pushOnce(deps) {
                 }
             }
         }
+    }
+    // Desglose por fase SOLO cuando corre en una página (el runtime): el puente lo imprime.
+    if (typeof location !== 'undefined') {
+        marcarFase('total', performance.now() - t0Total);
+        const resumen = Object.entries(FASES)
+            .map(([clave, valor]) => `${clave}=${Math.round(valor)}`)
+            .join(' ');
+        void fetch('/fs/log', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ msg: `fases push: ${resumen}ms` }),
+        }).catch(() => {
+            /* el diagnóstico nunca rompe el sync */
+        });
     }
     return { diff, encoladas, empujadas, headRev: head, deletesBloqueados };
 }

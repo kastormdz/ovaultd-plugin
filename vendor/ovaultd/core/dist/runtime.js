@@ -6451,7 +6451,7 @@
   var estaExcluido = (path, configDir = ".obsidian") => motivoDeExclusion(path, configDir) !== null;
 
   // src/scan.ts
-  async function escanearVault(port, keys, dir = "", cache) {
+  async function escanearVault(port, keys, dir = "", cache, contenidos) {
     const archivos = [];
     const recorrer = async (relDir) => {
       const listado = await port.list(relDir === "" ? "." : relDir);
@@ -6495,11 +6495,18 @@
         const blobs = await port.readMany(lote.map((pendiente) => pendiente.rel));
         for (let j = 0; j < lote.length; j += 1) {
           const bytes = blobs[j];
-          if (bytes) leidos.set(lote[j].rel, bytes);
+          if (bytes) {
+            leidos.set(lote[j].rel, bytes);
+            contenidos?.set(lote[j].rel, bytes);
+          }
         }
       }
     } else {
-      for (const { rel } of porLeer) leidos.set(rel, await port.read(rel));
+      for (const { rel } of porLeer) {
+        const bytes = await port.read(rel);
+        leidos.set(rel, bytes);
+        contenidos?.set(rel, bytes);
+      }
     }
     for (const { rel, stat } of porLeer) {
       const bytes = leidos.get(rel);
@@ -6784,7 +6791,7 @@
   // src/push.ts
   var CERO32 = new Uint8Array(32);
   var CERO64 = new Uint8Array(64);
-  var TAMANO_LOTE = 50;
+  var TAMANO_LOTE = 250;
   function enLotes(items, tamano) {
     const lotes = [];
     for (let i = 0; i < items.length; i += tamano) lotes.push(items.slice(i, i + tamano));
@@ -6805,8 +6812,13 @@
         { mtime: entrada.mtime ?? null, size: entrada.size ?? null, contentHash: entrada.contentHash ?? null }
       ])
     );
-    const entradas = await escanearVault(port, keys, "", cache);
+    const contenidos = /* @__PURE__ */ new Map();
+    const tScan = performance.now();
+    const entradas = await escanearVault(port, keys, "", cache, contenidos);
+    marcarFase("scan", performance.now() - tScan);
+    const tDiff = performance.now();
     const diffBase = await diffLocal(store2, entradas);
+    marcarFase("diff", performance.now() - tDiff);
     const deletesBloqueados = entradas.length === 0 ? diffBase.borrados.length : 0;
     const diff = {
       ...diffBase,
@@ -6814,12 +6826,20 @@
     };
     let encoladas = 0;
     const encolar = async (entry) => {
-      if (await store2.getOutbox(entry.operationId)) return;
+      const tGet = performance.now();
+      const yaEsta = await store2.getOutbox(entry.operationId);
+      marcarFase("getOutbox", performance.now() - tGet);
+      if (yaEsta) return;
+      const tEncolar = performance.now();
       await store2.putOutbox(entry);
+      marcarFase("encolar", performance.now() - tEncolar);
       encoladas += 1;
     };
     for (const archivo of diff.nuevos) {
-      const bytes = await port.read(archivo.path);
+      const tLeer = performance.now();
+      const bytes = contenidos.get(archivo.path) ?? await port.read(archivo.path);
+      contenidos.delete(archivo.path);
+      marcarFase("leer", performance.now() - tLeer);
       await encolar(
         prepareOutboxEntry({
           kind: "add",
@@ -6833,7 +6853,10 @@
       );
     }
     for (const archivo of diff.modificados) {
-      const bytes = await port.read(archivo.path);
+      const tLeer = performance.now();
+      const bytes = contenidos.get(archivo.path) ?? await port.read(archivo.path);
+      contenidos.delete(archivo.path);
+      marcarFase("leer", performance.now() - tLeer);
       await encolar(
         prepareOutboxEntry({
           kind: "mod",
@@ -6887,12 +6910,16 @@
           `snapshot corrupto en ${entry.operationId} (declarado ${entry.snapshotHash}, real ${real})`
         );
       }
+      const tPrep = performance.now();
       const almacenado = encryptBlob(keys, plano);
       const idBytes = blobId(almacenado);
       blobIdHex = toHex(idBytes);
       blobIdBytes = idBytes;
       tamano = plano.length;
+      marcarFase("preparar", performance.now() - tPrep);
+      const tPut = performance.now();
       await conn.putBlob(blobIdHex, almacenado);
+      marcarFase("put", performance.now() - tPut);
     }
     const tmacBytes = esDel ? CERO64 : tMac(identidad, vaultUuid, pathIdBytes, blobIdBytes, epoch);
     const sig = signRecord(
@@ -6933,10 +6960,10 @@
       blobId: esDel ? null : blobIdHex,
       contentHash: esDel ? null : entry.snapshotHash ?? null
     });
-    const indice = await store2.getIndex(entry.pathId);
+    const path = entry.path ?? (await store2.getIndex(entry.pathId))?.path;
     await store2.putIndex({
       pathId: entry.pathId,
-      path: entry.path ?? indice?.path,
+      path,
       kind: "file",
       deleted: esDel,
       rev,
@@ -6949,20 +6976,55 @@
     });
     await store2.setOutboxState(entry.operationId, "confirmed");
     await store2.deleteOutbox(entry.operationId);
-    const minRev = (await store2.readCheckpoint().catch(() => null))?.minRev ?? null;
-    await store2.writeCheckpoint({ since: rev, minRev, updatedAt: Date.now() });
+  }
+  var CONCURRENCIA_PUT = 16;
+  async function enTandas(items, limite, fn) {
+    const resultado = new Array(items.length);
+    let siguiente = 0;
+    const trabajadores = Array.from({ length: Math.min(limite, items.length) }, async () => {
+      for (; ; ) {
+        const i = siguiente;
+        siguiente += 1;
+        if (i >= items.length) return;
+        resultado[i] = await fn(items[i]);
+      }
+    });
+    await Promise.all(trabajadores);
+    return resultado;
+  }
+  var FASES = {
+    scan: 0,
+    diff: 0,
+    leer: 0,
+    encolar: 0,
+    preparar: 0,
+    commit: 0,
+    put: 0,
+    listOutbox: 0,
+    getOutbox: 0,
+    confirmar: 0,
+    total: 0
+  };
+  function marcarFase(nombre, ms) {
+    FASES[nombre] += ms;
   }
   async function pushOnce(deps) {
+    for (const clave of Object.keys(FASES)) FASES[clave] = 0;
+    const t0Total = performance.now();
     const { store: store2 } = deps;
     let head = (await store2.readCheckpoint().catch(() => null))?.since ?? 0;
     const { diff, encoladas, deletesBloqueados } = await encolarDiff(deps, head);
     let empujadas = 0;
+    const tLista = performance.now();
     const pendientes = (await store2.listOutbox()).filter((entry) => entry.state !== "confirmed").sort((a, b) => a.queuedAt - b.queuedAt);
+    marcarFase("listOutbox", performance.now() - tLista);
     const subir = async (lote) => {
       const operationIdDelLote = lote[0].operationId;
       const operacionDelLote = operacionBytes(operationIdDelLote);
-      const construidas = await Promise.all(
-        lote.map((entry) => construirOp(deps, entry, head, operacionDelLote))
+      const construidas = await enTandas(
+        lote,
+        CONCURRENCIA_PUT,
+        (entry) => construirOp(deps, entry, head, operacionDelLote)
       );
       const batch = {
         t: "batch",
@@ -6972,10 +7034,16 @@
         ops: construidas.map((construida) => construida.op)
       };
       for (const entry of lote) await store2.setOutboxState(entry.operationId, "sent");
+      const tCommit = performance.now();
       const ack = await deps.conn.commit(batch);
+      marcarFase("commit", performance.now() - tCommit);
+      const tConfirmar = performance.now();
       for (let i = 0; i < lote.length; i += 1) {
         await confirmar(deps, lote[i], ack.rev, construidas[i].blobIdHex);
       }
+      marcarFase("confirmar", performance.now() - tConfirmar);
+      const minRev = (await store2.readCheckpoint().catch(() => null))?.minRev ?? null;
+      await store2.writeCheckpoint({ since: ack.rev, minRev, updatedAt: Date.now() });
       head = ack.rev;
       empujadas += lote.length;
     };
@@ -7007,6 +7075,16 @@
           }
         }
       }
+    }
+    if (typeof location !== "undefined") {
+      marcarFase("total", performance.now() - t0Total);
+      const resumen = Object.entries(FASES).map(([clave, valor]) => `${clave}=${Math.round(valor)}`).join(" ");
+      void fetch("/fs/log", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ msg: `fases push: ${resumen}ms` })
+      }).catch(() => {
+      });
     }
     return { diff, encoladas, empujadas, headRev: head, deletesBloqueados };
   }

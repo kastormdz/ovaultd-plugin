@@ -6,6 +6,16 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 (mismo `MAJOR.MINOR` = pareja probada junta; ver ADR-0018 y la sección «Compatibility» del
 README).
 
+## [0.2.24] — 2026-10-19
+
+### Changed
+
+- **Núcleo sincronizado (rendimiento del push)**: el escaneo reusa los bytes que ya leyó
+  (sin un `read` extra por archivo), los PUT van en tandas de 16 (no 50 en vuelo) y los
+  lotes suben a 250 ops porque el commit tiene un costo fijo por lote. `confirmar` sin
+  `getIndex` redundante y checkpoint una vez por lote. En Obsidian el efecto es menor
+  (el `read` es local), pero los lotes y el checkpoint también aplican.
+
 ## [0.2.23] — 2026-10-19
 
 ### Changed

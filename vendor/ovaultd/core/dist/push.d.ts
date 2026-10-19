@@ -49,6 +49,5 @@ export interface PushReport {
         mensaje: string;
     };
 }
-/** Una pasada de subida: escanear → encolar → drenar. No reconecta (eso es del llamador). */
 export declare function pushOnce(deps: PushDeps): Promise<PushReport>;
 //# sourceMappingURL=push.d.ts.map
