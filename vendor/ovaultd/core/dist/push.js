@@ -26,8 +26,10 @@ import { SyncConflictError } from './SyncConnection.js';
 const CERO32 = new Uint8Array(32);
 const CERO64 = new Uint8Array(64);
 /**
- * Ops por batch. El server acepta hasta MAX_BATCH_OPS (1000); 50 mantiene los lotes
- * chicos (un conflicto aisla menos trabajo) sin perder la ganancia de round-trips.
+ * Ops por batch. El server acepta hasta MAX_BATCH_OPS (1000). Lotes grandes amortizan el
+ * costo FIJO del commit (un round-trip WS + una transacción + un `syncfs`: ~450-600 ms
+ * medidos por lote, casi independiente del tamaño); el aislamiento de un conflicto sigue
+ * siendo por op (se reintenta de a una si el lote falla).
  */
 const TAMANO_LOTE = 250;
 /** Parte una lista en lotes de a lo sumo `tamano`. */
