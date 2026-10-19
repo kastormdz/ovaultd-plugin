@@ -36,6 +36,12 @@ export class HttpFileSystemPort {
         const result = await this.op('read', { path: relPath });
         return b64Decode(result.b64);
     }
+    async readMany(relPaths) {
+        const result = await this.op('readMany', {
+            paths: relPaths,
+        });
+        return result.blobs.map((b64) => (b64 === null ? null : b64Decode(b64)));
+    }
     writeTemp(relDir, bytes) {
         return this.op('writeTemp', { dir: relDir, b64: b64Encode(bytes) });
     }

@@ -45,6 +45,7 @@ export async function escanearVault(port, keys, dir = '', cache) {
         ? await port.statMany(archivos)
         : await Promise.all(archivos.map((rel) => port.stat(rel)));
     const salida = [];
+    const porLeer = [];
     for (let i = 0; i < archivos.length; i += 1) {
         const rel = archivos[i];
         const stat = stats[i] ?? null;
@@ -69,7 +70,33 @@ export async function escanearVault(port, keys, dir = '', cache) {
             });
             continue;
         }
-        const bytes = await port.read(rel);
+        porLeer.push({ rel, stat });
+    }
+    // Reads MASIVOS: los archivos nuevos o cambiados se leen en tandas (un round-trip por
+    // lote de 100) en vez de uno por archivo contra el puente (~30 ms cada uno: el cuello
+    // que quedaba en la primera subida). Sin `readMany` en el port, bucle clásico.
+    const LOTE_LECTURA = 100;
+    const leidos = new Map();
+    if (port.readMany && porLeer.length > 0) {
+        for (let i = 0; i < porLeer.length; i += LOTE_LECTURA) {
+            const lote = porLeer.slice(i, i + LOTE_LECTURA);
+            const blobs = await port.readMany(lote.map((pendiente) => pendiente.rel));
+            for (let j = 0; j < lote.length; j += 1) {
+                const bytes = blobs[j];
+                if (bytes)
+                    leidos.set(lote[j].rel, bytes);
+            }
+        }
+    }
+    else {
+        for (const { rel } of porLeer)
+            leidos.set(rel, await port.read(rel));
+    }
+    for (const { rel, stat } of porLeer) {
+        const bytes = leidos.get(rel);
+        // Se fue entre el stat y el read: no se puede hashear lo que ya no está.
+        if (!bytes)
+            continue;
         salida.push({
             path: rel,
             pathId: toHex(calcularPathId(keys, rel)),

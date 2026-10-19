@@ -122,7 +122,8 @@ export class SyncConnection {
     }
     /** Publica un blob (el contenido ya cifrado, con su sobre). */
     async putBlob(blobIdHex, bytes) {
-        const respuesta = await fetch(`${this.base}/api/v1/vaults/${this.opciones.vault}/blobs/${blobIdHex}`, {
+        const fetchFn = this.opciones.fetchImpl ?? fetch;
+        const respuesta = await fetchFn(`${this.base}/api/v1/vaults/${this.opciones.vault}/blobs/${blobIdHex}`, {
             method: 'PUT',
             headers: { ...this.headers(), 'content-type': 'application/octet-stream' },
             body: new Uint8Array(bytes).buffer,

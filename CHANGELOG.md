@@ -6,6 +6,15 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 (mismo `MAJOR.MINOR` = pareja probada junta; ver ADR-0018 y la sección «Compatibility» del
 README).
 
+## [0.2.23] — 2026-10-19
+
+### Changed
+
+- **Núcleo sincronizado**: `readMany` en el puerto de archivos (el escaneo del CLI lee en
+  tandas; en el plugin el `read` es local y el bucle sigue igual), `fetchImpl` inyectable
+  en `SyncConnection` y el puente binario del CLI. Sin cambios de comportamiento en
+  Obsidian.
+
 ## [0.2.22] — 2026-10-19
 
 ### Changed

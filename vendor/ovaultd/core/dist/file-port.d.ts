@@ -24,6 +24,12 @@ export interface FileSystemPort {
      * del bench). Opcional: sin soporte, el escaneo bate el bucle de `stat`.
      */
     statMany?(relPaths: string[]): Promise<Array<VaultStat | null>>;
+    /**
+     * Lee varios archivos en UNA tanda (un round-trip, como `statMany`). El escaneo lo pide
+     * por lotes para no pagar ~30 ms de bridge por archivo en la primera subida. Opcional:
+     * sin soporte, el escaneo bate el bucle de `read`.
+     */
+    readMany?(relPaths: string[]): Promise<Array<Uint8Array | null>>;
     read(relPath: string): Promise<Uint8Array>;
     /** Escribe un temporal en `relDir`; devuelve su nombre (relativo al vault). */
     writeTemp(relDir: string, bytes: Uint8Array): Promise<{
@@ -42,6 +48,7 @@ export declare class HttpFileSystemPort implements FileSystemPort {
     stat(relPath: string): Promise<VaultStat | null>;
     statMany(relPaths: string[]): Promise<Array<VaultStat | null>>;
     read(relPath: string): Promise<Uint8Array>;
+    readMany(relPaths: string[]): Promise<Array<Uint8Array | null>>;
     writeTemp(relDir: string, bytes: Uint8Array): Promise<{
         tempName: string;
     }>;

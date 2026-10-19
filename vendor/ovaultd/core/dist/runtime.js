@@ -6249,6 +6249,12 @@
       const result = await this.op("read", { path: relPath });
       return b64Decode(result.b64);
     }
+    async readMany(relPaths) {
+      const result = await this.op("readMany", {
+        paths: relPaths
+      });
+      return result.blobs.map((b64) => b64 === null ? null : b64Decode(b64));
+    }
     writeTemp(relDir, bytes) {
       return this.op("writeTemp", { dir: relDir, b64: b64Encode(bytes) });
     }
@@ -6463,6 +6469,7 @@
     await recorrer(dir);
     const stats = port.statMany ? await port.statMany(archivos) : await Promise.all(archivos.map((rel) => port.stat(rel)));
     const salida = [];
+    const porLeer = [];
     for (let i = 0; i < archivos.length; i += 1) {
       const rel = archivos[i];
       const stat = stats[i] ?? null;
@@ -6478,7 +6485,25 @@
         });
         continue;
       }
-      const bytes = await port.read(rel);
+      porLeer.push({ rel, stat });
+    }
+    const LOTE_LECTURA = 100;
+    const leidos = /* @__PURE__ */ new Map();
+    if (port.readMany && porLeer.length > 0) {
+      for (let i = 0; i < porLeer.length; i += LOTE_LECTURA) {
+        const lote = porLeer.slice(i, i + LOTE_LECTURA);
+        const blobs = await port.readMany(lote.map((pendiente) => pendiente.rel));
+        for (let j = 0; j < lote.length; j += 1) {
+          const bytes = blobs[j];
+          if (bytes) leidos.set(lote[j].rel, bytes);
+        }
+      }
+    } else {
+      for (const { rel } of porLeer) leidos.set(rel, await port.read(rel));
+    }
+    for (const { rel, stat } of porLeer) {
+      const bytes = leidos.get(rel);
+      if (!bytes) continue;
       salida.push({
         path: rel,
         pathId: toHex(pathId(keys, rel)),
@@ -6654,7 +6679,8 @@
     }
     /** Publica un blob (el contenido ya cifrado, con su sobre). */
     async putBlob(blobIdHex, bytes) {
-      const respuesta = await fetch(
+      const fetchFn = this.opciones.fetchImpl ?? fetch;
+      const respuesta = await fetchFn(
         `${this.base}/api/v1/vaults/${this.opciones.vault}/blobs/${blobIdHex}`,
         {
           method: "PUT",
@@ -7686,7 +7712,31 @@
         token: String(params.token),
         vault: Number(params.vault),
         device: Number(params.device),
-        keys
+        keys,
+        // El HTTP del cliente pasa por el PUENTE (mismo origen que la página): el cache del
+        // preflight CORS del navegador es por URL y cada blob tiene la suya, así que un PUT
+        // directo pagaba un OPTIONS de ~40 ms por blob. El puente lo reenvía con node.
+        fetchImpl: async (input, init) => {
+          const peticion = input instanceof Request ? input : null;
+          const url = peticion ? peticion.url : String(input);
+          const metodo = init?.method ?? peticion?.method ?? "GET";
+          const headers = init?.headers ?? {};
+          const cuerpo = init?.body;
+          const res = await fetch("/fs/proxyFetch", {
+            method: "POST",
+            headers: {
+              "content-type": "application/octet-stream",
+              "x-ovaultd-url": encodeURIComponent(url),
+              "x-ovaultd-method": metodo,
+              "x-ovaultd-headers": JSON.stringify(headers)
+            },
+            body: cuerpo ?? null
+          });
+          if (!res.ok) throw new Error(`puente proxyFetch: HTTP ${res.status}`);
+          const status = Number(res.headers.get("x-ovaultd-status") ?? 502);
+          const bytes = await res.arrayBuffer();
+          return new Response(bytes.byteLength ? bytes : null, { status });
+        }
       });
       const { headRev } = await conn.open({ since: Number(params.since ?? 0) });
       syncConn = conn;

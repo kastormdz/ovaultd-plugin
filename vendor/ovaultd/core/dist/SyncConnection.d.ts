@@ -39,6 +39,13 @@ export interface SyncConnectionOptions {
      * que produjo el lote, así que un aviso siempre significa que hay algo que bajar.
      */
     alRecibirAviso?: () => void;
+    /**
+     * `fetch` alternativo para las llamadas HTTP del cliente (los PUT de blobs y los GET).
+     * El runtime de la página lo usa para pasar por el PUENTE (mismo origen): el navegador
+     * no puede compartir el cache del preflight CORS entre URLs distintas y cada blob es
+     * una URL propia — sin esto paga un OPTIONS de ~40 ms POR blob.
+     */
+    fetchImpl?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 }
 export declare class SyncConnection {
     private readonly opciones;
