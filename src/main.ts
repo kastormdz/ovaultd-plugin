@@ -58,6 +58,7 @@ export default class PluginOvaultd extends Plugin {
       (estado) => this.mostrarEstadoDelMotor(estado),
       this.manifest.version,
     );
+    this.motor.modoDeSync = this.ajustes.modo;
 
     this.puente = new PuenteDeEventos(this.app.vault, {
       onCambio: (cambio) => this.alCambiar(cambio),
@@ -221,6 +222,8 @@ export default class PluginOvaultd extends Plugin {
 
   async guardarAjustes(): Promise<void> {
     await this.saveData(this.ajustes);
+    // El modo es estado vivo del motor: se aplica en el próximo ciclo sin reiniciar nada.
+    this.motor.modoDeSync = this.ajustes.modo;
   }
 
   private mostrarEstadoDelMotor(estado: EstadoDelMotor): void {

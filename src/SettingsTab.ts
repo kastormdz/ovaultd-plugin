@@ -17,6 +17,7 @@ import { abrirBorradoVault, abrirCambiarPassword, abrirRecuperarVault } from './
 import { comandoExportar, comandoImportar } from './ExportImport';
 import { comandoHistoriaDeNota, comandoHistoriaDeRuta } from './HistoryView';
 import type PluginOvaultd from './main';
+import type { ModoDeSync } from '@ovaultd/core';
 
 export interface AjustesDeOvaultd {
   /** URL base del servidor ovaultd, sin barra final (ej. https://sync.midominio.com). */
@@ -25,12 +26,15 @@ export interface AjustesDeOvaultd {
   email: string;
   /** Histórico: número de vault como texto (hoy la lista de la cuenta manda). */
   vaultNumero: string;
+  /** Cómo participa este dispositivo: normal · solo bajar · espejo del server. */
+  modo: ModoDeSync;
 }
 
 export const AJUSTES_POR_DEFECTO: AjustesDeOvaultd = {
   serverUrl: '',
   email: '',
   vaultNumero: '',
+  modo: 'normal',
 };
 
 const FASE_A_TEXTO: Record<string, string> = {
@@ -334,6 +338,26 @@ export class TabAjustes extends PluginSettingTab {
         this.display();
       }),
     );
+    new Setting(containerEl).setName('Sincronización').setHeading();
+
+    new Setting(containerEl)
+      .setName('Modo de este dispositivo')
+      .setDesc(
+        'Normal: sube y baja. Solo bajar: nunca publica (este equipo solo lee). ' +
+          'Espejo: manda el servidor; lo local que se descarta queda resguardado en .ovaultd-descartes.',
+      )
+      .addDropdown((lista) =>
+        lista
+          .addOption('normal', 'Normal')
+          .addOption('pull-only', 'Solo bajar')
+          .addOption('mirror-remote', 'Espejo del servidor')
+          .setValue(this.plugin.ajustes.modo)
+          .onChange(async (valor) => {
+            this.plugin.ajustes.modo = valor as ModoDeSync;
+            await this.plugin.guardarAjustes();
+            this.plugin.motor.modoDeSync = valor as ModoDeSync;
+          }),
+      );
   }
 
   private async cargarVaults(): Promise<void> {

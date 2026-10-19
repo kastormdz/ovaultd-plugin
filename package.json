@@ -1,6 +1,6 @@
 {
   "name": "@ovaultd/plugin",
-  "version": "0.2.19",
+  "version": "0.2.20",
   "description": "Obsidian plugin for ovaultd — self-hosted, end-to-end encrypted sync.",
   "private": true,
   "license": "MIT",

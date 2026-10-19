@@ -23,6 +23,16 @@ import type { SyncConnection } from './SyncConnection.js';
 import type { StateStore } from './StateStore.js';
 import type { SubKeys } from '@ovaultd/crypto';
 
+/**
+ * Cómo participa este dispositivo del vault (plan fase 3, paso 5):
+ *  - `normal`: pull → push (el comportamiento de siempre).
+ *  - `pull-only`: SOLO baja; jamás publica operaciones — tampoco copias de conflicto.
+ *  - `mirror-remote`: el server manda. Igual que pull-only no publica; el pull pisa lo
+ *    local a propósito y lo descartado se resguarda en `.ovaultd-descartes/` (vetado por
+ *    el filtro: nunca se sube).
+ */
+export type ModoDeSync = 'normal' | 'pull-only' | 'mirror-remote';
+
 export interface SyncCycleDeps {
   store: StateStore;
   port: FileSystemPort;
@@ -31,6 +41,11 @@ export interface SyncCycleDeps {
   /** `vault_id` de 16 B del material (el que firma), no el numérico del server. */
   vaultUuid: Uint8Array;
   epoch: number;
+  /**
+   * Cómo participa este dispositivo (default `normal`). `pull-only` jamás publica: el
+   * pull deja el estado local al día y lo que no vino del server se queda acá.
+   */
+  modo?: ModoDeSync;
 }
 
 export interface ConflictoDeSync {
@@ -53,7 +68,12 @@ export interface SyncCycleReport {
 export async function correrCiclo(deps: SyncCycleDeps): Promise<SyncCycleReport> {
   const { store, port, keys, conn, vaultUuid, epoch } = deps;
 
-  const pull = await pullOnce(conn, { store, port, keys });
+  const pull = await pullOnce(conn, {
+    store,
+    port,
+    keys,
+    forzar: deps.modo === 'mirror-remote',
+  });
 
   if (pull.status === 'resync-required') {
     const detalle = pull.resync ?? { since: -1, minRev: -1 };
@@ -85,6 +105,13 @@ export async function correrCiclo(deps: SyncCycleDeps): Promise<SyncCycleReport>
         },
       ],
     };
+  }
+
+  if (deps.modo === 'pull-only' || deps.modo === 'mirror-remote') {
+    // Ninguno de los dos publica jamás: el pull deja el estado local al día (en espejo,
+    // pisando lo local con copia de descartes) y lo que no vino del server se queda acá.
+    // `push: null` es el contrato del report para "no se intentó publicar".
+    return { estado: 'convergido', pull, push: null, conflictos: [] };
   }
 
   const push = await pushOnce({ store, port, keys, conn, vaultUuid, epoch });

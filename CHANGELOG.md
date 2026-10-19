@@ -6,6 +6,26 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 (mismo `MAJOR.MINOR` = pareja probada junta; ver ADR-0018 y la sección «Compatibility» del
 README).
 
+## [0.2.20] — 2026-10-19
+
+### Added
+
+- **Modos de sincronización por dispositivo** (plan fase 3, paso 5): Ajustes → «Modo de
+  este dispositivo»:
+  - **Normal**: sube y baja (el comportamiento de siempre).
+  - **Solo bajar** (`pull-only`): nunca publica operaciones — tampoco copias de conflicto.
+    Ideal para un equipo de consulta.
+  - **Espejo del servidor** (`mirror-remote`): el servidor manda; el pull pisa lo local y
+    lo descartado se resguarda en `.ovaultd-descartes/<sello>/` (vetado del sync: nunca
+    vuelve al servidor).
+
+### Fixed
+
+- **Un cliente sin archivos locales ya no borra el vault remoto**: sin un solo archivo en
+  disco (vault recién creado, disco sin montar, scan a medias) los «borrados» del diff no
+  se encolan y el report lo expone como `deletesBloqueados`. Es el caso que destapó el
+  bench (1000 borrados subidos por un cliente que heredó un checkpoint ajeno).
+
 ## [0.2.19] — 2026-10-19
 
 ### Fixed

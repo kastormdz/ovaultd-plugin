@@ -20,7 +20,12 @@ import { pullOnce } from './reconcile.js';
 /** Una pasada completa: pull y (si se puede) push. No reconecta: eso es de `retry`. */
 export async function correrCiclo(deps) {
     const { store, port, keys, conn, vaultUuid, epoch } = deps;
-    const pull = await pullOnce(conn, { store, port, keys });
+    const pull = await pullOnce(conn, {
+        store,
+        port,
+        keys,
+        forzar: deps.modo === 'mirror-remote',
+    });
     if (pull.status === 'resync-required') {
         const detalle = pull.resync ?? { since: -1, minRev: -1 };
         return {
@@ -50,6 +55,12 @@ export async function correrCiclo(deps) {
                 },
             ],
         };
+    }
+    if (deps.modo === 'pull-only' || deps.modo === 'mirror-remote') {
+        // Ninguno de los dos publica jamás: el pull deja el estado local al día (en espejo,
+        // pisando lo local con copia de descartes) y lo que no vino del server se queda acá.
+        // `push: null` es el contrato del report para "no se intentó publicar".
+        return { estado: 'convergido', pull, push: null, conflictos: [] };
     }
     const push = await pushOnce({ store, port, keys, conn, vaultUuid, epoch });
     const conflictos = [];

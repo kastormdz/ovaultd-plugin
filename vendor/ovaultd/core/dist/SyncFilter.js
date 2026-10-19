@@ -25,6 +25,7 @@ const CARPETAS_VETADAS = new Map([
     ['.trash', 'papelera local del vault'],
     ['.git', 'repositorio git anidado'],
     ['node_modules', 'dependencias de node'],
+    ['.ovaultd-descartes', 'copias de protección del modo espejo (locales, jamás se suben)'],
 ]);
 /**
  * La lista BLANCA de configuración portable: lo único que sale de `configDir`.

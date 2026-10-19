@@ -21,6 +21,15 @@ import { type PullReport } from './reconcile.js';
 import type { SyncConnection } from './SyncConnection.js';
 import type { StateStore } from './StateStore.js';
 import type { SubKeys } from '@ovaultd/crypto';
+/**
+ * Cómo participa este dispositivo del vault (plan fase 3, paso 5):
+ *  - `normal`: pull → push (el comportamiento de siempre).
+ *  - `pull-only`: SOLO baja; jamás publica operaciones — tampoco copias de conflicto.
+ *  - `mirror-remote`: el server manda. Igual que pull-only no publica; el pull pisa lo
+ *    local a propósito y lo descartado se resguarda en `.ovaultd-descartes/` (vetado por
+ *    el filtro: nunca se sube).
+ */
+export type ModoDeSync = 'normal' | 'pull-only' | 'mirror-remote';
 export interface SyncCycleDeps {
     store: StateStore;
     port: FileSystemPort;
@@ -29,6 +38,11 @@ export interface SyncCycleDeps {
     /** `vault_id` de 16 B del material (el que firma), no el numérico del server. */
     vaultUuid: Uint8Array;
     epoch: number;
+    /**
+     * Cómo participa este dispositivo (default `normal`). `pull-only` jamás publica: el
+     * pull deja el estado local al día y lo que no vino del server se queda acá.
+     */
+    modo?: ModoDeSync;
 }
 export interface ConflictoDeSync {
     tipo: 'pull-bloqueado' | 'push-conflicto' | 'resync';

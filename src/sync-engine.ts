@@ -37,6 +37,7 @@ import {
   type EleccionDeResolucion,
   type FileSystemPort,
   type IntentEntry,
+  type ModoDeSync,
   type SyncCycleReport,
 } from '@ovaultd/core';
 import {
@@ -192,6 +193,9 @@ export class MotorDeSync {
   private compat: Veredicto | null = null;
 
   estado: EstadoDelMotor = { fase: 'apagado', detalle: 'sin vincular', ultimaSync: null, ultimoReporte: null };
+
+  /** Cómo participa este dispositivo: `normal`, `pull-only` o `mirror-remote`. */
+  modoDeSync: ModoDeSync = 'normal';
 
   constructor(
     private readonly app: App,
@@ -903,6 +907,7 @@ export class MotorDeSync {
           conn,
           vaultUuid: this.vaultUuidBytes!,
           epoch: this.estadoLocal?.vault.epoch ?? 1,
+          modo: this.modoDeSync,
         });
       } while (this.sucio);
 

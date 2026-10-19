@@ -40,7 +40,14 @@ const operacionBytes = (operationId) => {
 async function encolarDiff(deps, head) {
     const { store, port, keys } = deps;
     const entradas = await escanearVault(port, keys);
-    const diff = await diffLocal(store, entradas);
+    const diffBase = await diffLocal(store, entradas);
+    // Un cliente VACÍO no borra el remoto (aceptación de fase 3): sin un solo archivo en
+    // disco, los deletes del diff no son una intención — se bloquean y se informan.
+    const deletesBloqueados = entradas.length === 0 ? diffBase.borrados.length : 0;
+    const diff = {
+        ...diffBase,
+        borrados: deletesBloqueados > 0 ? [] : diffBase.borrados,
+    };
     let encoladas = 0;
     const encolar = async (entry) => {
         // Idempotencia por payload: el MISMO cambio no duplica la operación.
@@ -88,6 +95,7 @@ async function encolarDiff(deps, head) {
             yaEncolados: diff.yaEncolados,
         },
         encoladas,
+        deletesBloqueados,
     };
 }
 /** Construye la operación del wire (cifra + firma) para una entrada de outbox. */
@@ -171,7 +179,7 @@ async function confirmar(deps, entry, rev, blobIdHex) {
 export async function pushOnce(deps) {
     const { store } = deps;
     let head = (await store.readCheckpoint().catch(() => null))?.since ?? 0;
-    const { diff, encoladas } = await encolarDiff(deps, head);
+    const { diff, encoladas, deletesBloqueados } = await encolarDiff(deps, head);
     let empujadas = 0;
     const pendientes = (await store.listOutbox())
         .filter((entry) => entry.state !== 'confirmed')
@@ -204,6 +212,7 @@ export async function pushOnce(deps) {
                     encoladas,
                     empujadas,
                     headRev: head,
+                    deletesBloqueados,
                     conflicto: {
                         operationId: entry.operationId,
                         path: entry.path,
@@ -214,6 +223,6 @@ export async function pushOnce(deps) {
             throw error;
         }
     }
-    return { diff, encoladas, empujadas, headRev: head };
+    return { diff, encoladas, empujadas, headRev: head, deletesBloqueados };
 }
 //# sourceMappingURL=push.js.map

@@ -52,7 +52,9 @@ async function aplicarRegistro(deps, conn, registro) {
     }
     // La conexión viaja en los deps: es lo que le permite al apply intentar la fusión
     // 3-vías (bajar el blob de la base del CAS) cuando el guard bloquea por "ambos cambiaron".
-    const resultado = await applyRevision({ ...deps, conn }, revision, stored);
+    const resultado = await applyRevision({ ...deps, conn }, revision, stored, {
+        forzar: deps.forzar === true,
+    });
     if (resultado.status === 'blocked') {
         return { aplicado: false, bloqueado: { reason: resultado.reason } };
     }

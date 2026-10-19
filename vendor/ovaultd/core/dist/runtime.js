@@ -6092,6 +6092,9 @@
       if (revision.deleted) {
         if (verdict !== "already-gone") await port.unlink(revision.path);
       } else if (verdict !== "identical") {
+        if (opciones.forzar === true) {
+          await resguardarDescartes(port, revision.path);
+        }
         const dir = dirVault(revision.path);
         if (dir !== ".") await port.mkdirp(dir);
         const { tempName } = await port.writeTemp(dir, plaintext);
@@ -6151,6 +6154,20 @@
       },
       checkpoint: { since: intent.rev, minRev: null }
     });
+  }
+  var SELLO_DESCARTES = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  var DIR_DESCARTES = ".ovaultd-descartes";
+  async function resguardarDescartes(port, relPath) {
+    if (relPath === "" || relPath.endsWith("/")) return;
+    try {
+      const actual = await port.read(relPath);
+      const destino = `${DIR_DESCARTES}/${SELLO_DESCARTES}/${relPath}`;
+      const dir = dirVault(destino);
+      await port.mkdirp(dir);
+      const { tempName } = await port.writeTemp(dir, actual);
+      await port.rename(tempName, destino);
+    } catch {
+    }
   }
   async function recoverApplies(deps) {
     const { store: store2, port } = deps;
@@ -6368,7 +6385,8 @@
   var CARPETAS_VETADAS = /* @__PURE__ */ new Map([
     [".trash", "papelera local del vault"],
     [".git", "repositorio git anidado"],
-    ["node_modules", "dependencias de node"]
+    ["node_modules", "dependencias de node"],
+    [".ovaultd-descartes", "copias de protecci\xF3n del modo espejo (locales, jam\xE1s se suben)"]
   ]);
   var CONFIG_PORTABLE = [
     /^appearance(\.json)?$/,
@@ -6725,7 +6743,12 @@
   async function encolarDiff(deps, head) {
     const { store: store2, port, keys } = deps;
     const entradas = await escanearVault(port, keys);
-    const diff = await diffLocal(store2, entradas);
+    const diffBase = await diffLocal(store2, entradas);
+    const deletesBloqueados = entradas.length === 0 ? diffBase.borrados.length : 0;
+    const diff = {
+      ...diffBase,
+      borrados: deletesBloqueados > 0 ? [] : diffBase.borrados
+    };
     let encoladas = 0;
     const encolar = async (entry) => {
       if (await store2.getOutbox(entry.operationId)) return;
@@ -6776,7 +6799,8 @@
         sinCambios: diff.sinCambios,
         yaEncolados: diff.yaEncolados
       },
-      encoladas
+      encoladas,
+      deletesBloqueados
     };
   }
   async function construirOp(deps, entry, expectedRev) {
@@ -6864,7 +6888,7 @@
   async function pushOnce(deps) {
     const { store: store2 } = deps;
     let head = (await store2.readCheckpoint().catch(() => null))?.since ?? 0;
-    const { diff, encoladas } = await encolarDiff(deps, head);
+    const { diff, encoladas, deletesBloqueados } = await encolarDiff(deps, head);
     let empujadas = 0;
     const pendientes = (await store2.listOutbox()).filter((entry) => entry.state !== "confirmed").sort((a, b) => a.queuedAt - b.queuedAt);
     for (const entry of pendientes) {
@@ -6892,6 +6916,7 @@
             encoladas,
             empujadas,
             headRev: head,
+            deletesBloqueados,
             conflicto: {
               operationId: entry.operationId,
               path: entry.path,
@@ -6902,7 +6927,7 @@
         throw error;
       }
     }
-    return { diff, encoladas, empujadas, headRev: head };
+    return { diff, encoladas, empujadas, headRev: head, deletesBloqueados };
   }
 
   // src/reconcile.ts
@@ -6939,7 +6964,9 @@
     if (!deleted && !folder) {
       stored = await conn.getBlob(revision.blobId);
     }
-    const resultado = await applyRevision({ ...deps, conn }, revision, stored);
+    const resultado = await applyRevision({ ...deps, conn }, revision, stored, {
+      forzar: deps.forzar === true
+    });
     if (resultado.status === "blocked") {
       return { aplicado: false, bloqueado: { reason: resultado.reason } };
     }
@@ -6981,7 +7008,12 @@
   // src/SyncClient.ts
   async function correrCiclo(deps) {
     const { store: store2, port, keys, conn, vaultUuid, epoch } = deps;
-    const pull = await pullOnce(conn, { store: store2, port, keys });
+    const pull = await pullOnce(conn, {
+      store: store2,
+      port,
+      keys,
+      forzar: deps.modo === "mirror-remote"
+    });
     if (pull.status === "resync-required") {
       const detalle = pull.resync ?? { since: -1, minRev: -1 };
       return {
@@ -7011,6 +7043,9 @@
           }
         ]
       };
+    }
+    if (deps.modo === "pull-only" || deps.modo === "mirror-remote") {
+      return { estado: "convergido", pull, push: null, conflictos: [] };
     }
     const push = await pushOnce({ store: store2, port, keys, conn, vaultUuid, epoch });
     const conflictos = [];

@@ -26,5 +26,7 @@ export interface PullReport {
     };
 }
 /** Una pasada de convergencia (pull). No reconecta: eso es de `retry`/llamador. */
-export declare function pullOnce(conn: SyncConnection, deps: ApplyDeps): Promise<PullReport>;
+export declare function pullOnce(conn: SyncConnection, deps: ApplyDeps & {
+    forzar?: boolean;
+}): Promise<PullReport>;
 //# sourceMappingURL=reconcile.d.ts.map

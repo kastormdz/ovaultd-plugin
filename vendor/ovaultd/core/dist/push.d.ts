@@ -37,6 +37,12 @@ export interface PushReport {
     encoladas: number;
     empujadas: number;
     headRev: number;
+    /**
+     * Deletes que la guarda del cliente vacío NO encoló: sin ningún archivo local, los
+     * "borrados" del diff son un artefacto (vault recién creado, disco sin montar, scan a
+     * medias), no una intención del usuario.
+     */
+    deletesBloqueados: number;
     conflicto?: {
         operationId: string;
         path?: string;
