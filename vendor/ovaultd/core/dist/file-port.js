@@ -26,6 +26,12 @@ export class HttpFileSystemPort {
     stat(relPath) {
         return this.op('stat', { path: relPath });
     }
+    async statMany(relPaths) {
+        const result = await this.op('statMany', {
+            paths: relPaths,
+        });
+        return result.stats;
+    }
     async read(relPath) {
         const result = await this.op('read', { path: relPath });
         return b64Decode(result.b64);

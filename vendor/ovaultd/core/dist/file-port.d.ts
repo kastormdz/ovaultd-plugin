@@ -18,6 +18,12 @@ export interface VaultDirEntry {
 }
 export interface FileSystemPort {
     stat(relPath: string): Promise<VaultStat | null>;
+    /**
+     * Stat de VARIOS paths en UN round-trip. El escaneo lo usa para no pagar un request
+     * por archivo contra el puente (un vault de 1000 notas = 1000 POST: el cuello del T3
+     * del bench). Opcional: sin soporte, el escaneo bate el bucle de `stat`.
+     */
+    statMany?(relPaths: string[]): Promise<Array<VaultStat | null>>;
     read(relPath: string): Promise<Uint8Array>;
     /** Escribe un temporal en `relDir`; devuelve su nombre (relativo al vault). */
     writeTemp(relDir: string, bytes: Uint8Array): Promise<{
@@ -34,6 +40,7 @@ export declare class HttpFileSystemPort implements FileSystemPort {
     constructor(baseUrl: string);
     private op;
     stat(relPath: string): Promise<VaultStat | null>;
+    statMany(relPaths: string[]): Promise<Array<VaultStat | null>>;
     read(relPath: string): Promise<Uint8Array>;
     writeTemp(relDir: string, bytes: Uint8Array): Promise<{
         tempName: string;

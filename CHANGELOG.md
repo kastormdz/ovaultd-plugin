@@ -6,6 +6,16 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 (mismo `MAJOR.MINOR` = pareja probada junta; ver ADR-0018 y la sección «Compatibility» del
 README).
 
+## [0.2.22] — 2026-10-19
+
+### Changed
+
+- **Escaneo con `statMany`**: el adapter del plugin expone el stat masivo y el escaneo pide
+  los stats del vault en una sola tanda (en el CLI, un request al puente en vez de uno por
+  archivo). Bench: el ciclo en reposo y el delta de un cambio bajaron de 3,4 s a ~1,8 s
+  medidos con el CLI — **el ciclo neto quedó en ~0,3 s** (lo demás es el arranque de
+  Chromium del CLI, que el plugin no paga).
+
 ## [0.2.21] — 2026-10-19
 
 ### Changed

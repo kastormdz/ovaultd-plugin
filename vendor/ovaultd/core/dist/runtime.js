@@ -6239,6 +6239,12 @@
     stat(relPath) {
       return this.op("stat", { path: relPath });
     }
+    async statMany(relPaths) {
+      const result = await this.op("statMany", {
+        paths: relPaths
+      });
+      return result.stats;
+    }
     async read(relPath) {
       const result = await this.op("read", { path: relPath });
       return b64Decode(result.b64);
@@ -6440,7 +6446,7 @@
 
   // src/scan.ts
   async function escanearVault(port, keys, dir = "", cache) {
-    const salida = [];
+    const archivos = [];
     const recorrer = async (relDir) => {
       const listado = await port.list(relDir === "" ? "." : relDir);
       for (const entrada of listado) {
@@ -6451,29 +6457,36 @@
           continue;
         }
         if (!entrada.isFile) continue;
-        const stat = await port.stat(rel);
-        const recordado = cache?.get(rel);
-        if (recordado && stat && recordado.contentHash != null && recordado.mtime === stat.mtimeMs && recordado.size === stat.size) {
-          salida.push({
-            path: rel,
-            pathId: toHex(pathId(keys, rel)),
-            contentHash: recordado.contentHash,
-            size: stat.size,
-            mtimeMs: stat.mtimeMs
-          });
-          continue;
-        }
-        const bytes = await port.read(rel);
-        salida.push({
-          path: rel,
-          pathId: toHex(pathId(keys, rel)),
-          contentHash: toHex(cryptoProvider().sha256(bytes)),
-          size: bytes.length,
-          mtimeMs: stat?.mtimeMs ?? 0
-        });
+        archivos.push(rel);
       }
     };
     await recorrer(dir);
+    const stats = port.statMany ? await port.statMany(archivos) : await Promise.all(archivos.map((rel) => port.stat(rel)));
+    const salida = [];
+    for (let i = 0; i < archivos.length; i += 1) {
+      const rel = archivos[i];
+      const stat = stats[i] ?? null;
+      if (stat === null) continue;
+      const recordado = cache?.get(rel);
+      if (recordado && recordado.contentHash != null && recordado.mtime === stat.mtimeMs && recordado.size === stat.size) {
+        salida.push({
+          path: rel,
+          pathId: toHex(pathId(keys, rel)),
+          contentHash: recordado.contentHash,
+          size: stat.size,
+          mtimeMs: stat.mtimeMs
+        });
+        continue;
+      }
+      const bytes = await port.read(rel);
+      salida.push({
+        path: rel,
+        pathId: toHex(pathId(keys, rel)),
+        contentHash: toHex(cryptoProvider().sha256(bytes)),
+        size: bytes.length,
+        mtimeMs: stat.mtimeMs
+      });
+    }
     salida.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
     return salida;
   }

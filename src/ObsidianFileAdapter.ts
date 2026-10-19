@@ -70,6 +70,11 @@ export class AdaptadorDeArchivos implements FileSystemPort {
     }
   }
 
+  /** Stat masivo (el adapter local no paga round-trip, pero el escaneo lo usa igual). */
+  async statMany(rels: string[]): Promise<Array<VaultStat | null>> {
+    return Promise.all(rels.map((rel) => this.stat(rel)));
+  }
+
   async read(rel: string): Promise<Uint8Array> {
     const buffer = await this.datos.readBinary(this.normalizar(rel));
     return new Uint8Array(buffer);

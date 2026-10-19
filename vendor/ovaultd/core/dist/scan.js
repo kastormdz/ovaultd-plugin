@@ -20,7 +20,7 @@ import { toHex } from '@ovaultd/protocol';
 import { estaExcluido } from './SyncFilter.js';
 /** Recorre el vault completo (recursivo) y devuelve los archivos con su hash. */
 export async function escanearVault(port, keys, dir = '', cache) {
-    const salida = [];
+    const archivos = [];
     const recorrer = async (relDir) => {
         // El puente rechaza '' (frontera estricta): la raíz del vault se pide como '.'.
         const listado = await port.list(relDir === '' ? '.' : relDir);
@@ -35,37 +35,49 @@ export async function escanearVault(port, keys, dir = '', cache) {
             }
             if (!entrada.isFile)
                 continue;
-            const stat = await port.stat(rel);
-            // Escaneo incremental: si el archivo no cambió (mismo mtime y tamaño) el hash del
-            // índice sigue valiendo y NO se lee el contenido. Un vault de 100 MB pasa de ~8 s
-            // a milisegundos por ciclo. El riesgo de un mtime falseado lo cubren el watcher
-            // (los cambios locales llegan por evento) y un rescan completo a demanda.
-            const recordado = cache?.get(rel);
-            if (recordado &&
-                stat &&
-                recordado.contentHash != null &&
-                recordado.mtime === stat.mtimeMs &&
-                recordado.size === stat.size) {
-                salida.push({
-                    path: rel,
-                    pathId: toHex(calcularPathId(keys, rel)),
-                    contentHash: recordado.contentHash,
-                    size: stat.size,
-                    mtimeMs: stat.mtimeMs,
-                });
-                continue;
-            }
-            const bytes = await port.read(rel);
-            salida.push({
-                path: rel,
-                pathId: toHex(calcularPathId(keys, rel)),
-                contentHash: toHex(cryptoProvider().sha256(bytes)),
-                size: bytes.length,
-                mtimeMs: stat?.mtimeMs ?? 0,
-            });
+            archivos.push(rel);
         }
     };
     await recorrer(dir);
+    // Stat MASIVO: un solo round-trip por todo el vault (el escaneo pagaba uno por archivo
+    // contra el puente: 1000 POST en el bench). Sin `statMany` en el port, bucle clásico.
+    const stats = port.statMany
+        ? await port.statMany(archivos)
+        : await Promise.all(archivos.map((rel) => port.stat(rel)));
+    const salida = [];
+    for (let i = 0; i < archivos.length; i += 1) {
+        const rel = archivos[i];
+        const stat = stats[i] ?? null;
+        // Se fue entre el list y el stat: no hay nada que sincronizar de este path.
+        if (stat === null)
+            continue;
+        // Escaneo incremental: si el archivo no cambió (mismo mtime y tamaño) el hash del
+        // índice sigue valiendo y NO se lee el contenido. Un vault de 100 MB pasa de ~8 s
+        // a milisegundos por ciclo. El riesgo de un mtime falseado lo cubren el watcher
+        // (los cambios locales llegan por evento) y un rescan completo a demanda.
+        const recordado = cache?.get(rel);
+        if (recordado &&
+            recordado.contentHash != null &&
+            recordado.mtime === stat.mtimeMs &&
+            recordado.size === stat.size) {
+            salida.push({
+                path: rel,
+                pathId: toHex(calcularPathId(keys, rel)),
+                contentHash: recordado.contentHash,
+                size: stat.size,
+                mtimeMs: stat.mtimeMs,
+            });
+            continue;
+        }
+        const bytes = await port.read(rel);
+        salida.push({
+            path: rel,
+            pathId: toHex(calcularPathId(keys, rel)),
+            contentHash: toHex(cryptoProvider().sha256(bytes)),
+            size: bytes.length,
+            mtimeMs: stat.mtimeMs,
+        });
+    }
     salida.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
     return salida;
 }
