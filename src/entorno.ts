@@ -18,9 +18,10 @@ export const ventana: Window = (
  *
  * El panel del server lista los devices por nombre: con un literal («obsidian») todos los
  * equipos se ven iguales y no se sabe cuál revocar. En Electron el hostname del SO es la
- * etiqueta útil; en móvil no hay `require`, así que queda un nombre fijo distinguible.
- * `require` es DINÁMICO (igual que el export/import): el bundle móvil no debe ver imports
- * estáticos de node.
+ * etiqueta útil; en móvil no hay `require`, así que se usan las pistas del WebView: Android
+ * incluye el MODELO del equipo en el user-agent («SM-S918B»), que distingue dos teléfonos
+ * entre sí; iOS no lo expone y queda la familia. `require` es DINÁMICO (igual que el
+ * export/import): el bundle móvil no debe ver imports estáticos de node.
  */
 export function identidadDelDispositivo(): { name: string; platform: string } {
   try {
@@ -34,7 +35,16 @@ export function identidadDelDispositivo(): { name: string; platform: string } {
       }
     }
   } catch {
-    // sin puente de node (móvil): cae al nombre fijo de abajo
+    // sin puente de node (móvil): abajo van las pistas del user-agent
+  }
+  const ua = ventana.navigator?.userAgent ?? '';
+  const android = /Android[^;)]*;\s*([^;)]+?)(?:\s+Build[/;)]|[;)])/.exec(ua);
+  if (android?.[1]) {
+    return { name: android[1].trim(), platform: 'android' };
+  }
+  const ios = /(iPhone|iPad)/.exec(ua);
+  if (ios?.[1]) {
+    return { name: ios[1], platform: 'ios' };
   }
   return { name: 'Obsidian móvil', platform: 'movil' };
 }

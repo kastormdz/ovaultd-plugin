@@ -6,6 +6,16 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 (mismo `MAJOR.MINOR` = pareja probada junta; ver ADR-0018 y la sección «Compatibility» del
 README).
 
+## [0.2.19] — 2026-10-19
+
+### Fixed
+
+- **En Android el nombre del device pasa a ser el MODELO del equipo** (`SM-S918B`,
+  `Pixel 8`, …): el user-agent del WebView lo incluye y distingue dos teléfonos entre sí.
+  El fallback «Obsidian móvil» quedaba genérico para todos los móviles (el mismo problema
+  del literal «obsidian», en miniatura). En iOS el UA no expone el modelo: queda la familia
+  («iPhone»/«iPad»). Nuevos tests unitarios de `identidadDelDispositivo` con UA reales.
+
 ## [0.2.18] — 2026-10-19
 
 ### Fixed
