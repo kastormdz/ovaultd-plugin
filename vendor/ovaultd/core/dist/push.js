@@ -31,7 +31,7 @@ const CERO64 = new Uint8Array(64);
  * medidos por lote, casi independiente del tamaño); el aislamiento de un conflicto sigue
  * siendo por op (se reintenta de a una si el lote falla).
  */
-const TAMANO_LOTE = 250;
+const TAMANO_LOTE = 1000;
 /** Parte una lista en lotes de a lo sumo `tamano`. */
 function enLotes(items, tamano) {
     const lotes = [];
@@ -74,17 +74,16 @@ async function encolarDiff(deps, head) {
         borrados: deletesBloqueados > 0 ? [] : diffBase.borrados,
     };
     let encoladas = 0;
+    const pendientesDeEncolar = [];
     const encolar = async (entry) => {
-        // Idempotencia por payload: el MISMO cambio no duplica la operación.
+        // Idempotencia por payload: el MISMO cambio no duplica la operación. Las altas se
+        // acumulan y se escriben en UNA transacción al final (una por entrada costaba ~6 ms).
         const tGet = performance.now();
         const yaEsta = await store.getOutbox(entry.operationId);
         marcarFase('getOutbox', performance.now() - tGet);
         if (yaEsta)
             return;
-        const tEncolar = performance.now();
-        await store.putOutbox(entry);
-        marcarFase('encolar', performance.now() - tEncolar);
-        encoladas += 1;
+        pendientesDeEncolar.push(entry);
     };
     for (const archivo of diff.nuevos) {
         // Los bytes YA vienen del escaneo (readMany): no se vuelve a pedir el archivo al
@@ -126,6 +125,11 @@ async function encolarDiff(deps, head) {
             expectedRev: head,
         }));
     }
+    // Las altas del diff, en UNA transacción de IndexedDB.
+    const tEncolar = performance.now();
+    await store.putOutboxMany(pendientesDeEncolar);
+    marcarFase('encolar', performance.now() - tEncolar);
+    encoladas += pendientesDeEncolar.length;
     return {
         diff: {
             nuevos: diff.nuevos.length,
@@ -194,35 +198,34 @@ operationId) {
     };
     return { op, blobIdHex };
 }
-/** Con el ack en mano: base + índice avanzan y la operación se confirma y retira. */
-async function confirmar(deps, entry, rev, blobIdHex) {
-    const { store } = deps;
+/**
+ * Arma las filas de base e índice que el lote confirma de una sola transacción. El mtime
+ * es el REAL del archivo (no el de encolado): es lo que compara el escaneo incremental
+ * para decidir si puede reusar el hash sin leer el contenido.
+ */
+function datosDeConfirmacion(entry, rev, blobIdHex) {
     const esDel = entry.kind === 'del';
-    await store.putBase({
-        pathId: entry.pathId,
-        rev,
-        blobId: esDel ? null : blobIdHex,
-        contentHash: esDel ? null : (entry.snapshotHash ?? null),
-    });
-    // El path ya viene en la entrada (lo puso el diff): solo se consulta el índice si falta.
-    const path = entry.path ?? (await store.getIndex(entry.pathId))?.path;
-    await store.putIndex({
-        pathId: entry.pathId,
-        path,
-        kind: 'file',
-        deleted: esDel,
-        rev,
-        blobId: esDel ? null : blobIdHex,
-        size: entry.snapshot ? entry.snapshot.size : null,
-        // El mtime REAL del archivo (no el de encolado): es lo que compara el escaneo
-        // incremental para decidir si puede reusar el hash sin leer el contenido.
-        mtime: entry.mtimeMs ?? entry.queuedAt,
-        contentHash: esDel ? null : (entry.snapshotHash ?? null),
-    });
-    await store.setOutboxState(entry.operationId, 'confirmed');
-    await store.deleteOutbox(entry.operationId);
-    // El checkpoint lo escribe el LOTE (una vez, con el rev del ack): escribirlo por entrada
-    // era un read + un write de IndexedDB por nota sin aportar nada.
+    return {
+        entry,
+        base: {
+            pathId: entry.pathId,
+            rev,
+            blobId: esDel ? null : blobIdHex,
+            contentHash: esDel ? null : (entry.snapshotHash ?? null),
+        },
+        index: {
+            pathId: entry.pathId,
+            // El path ya viene en la entrada (lo puso el diff).
+            path: entry.path ?? '',
+            kind: 'file',
+            deleted: esDel,
+            rev,
+            blobId: esDel ? null : blobIdHex,
+            size: entry.snapshot ? entry.snapshot.size : null,
+            mtime: entry.mtimeMs ?? entry.queuedAt,
+            contentHash: esDel ? null : (entry.snapshotHash ?? null),
+        },
+    };
 }
 /** Una pasada de subida: escanear → encolar → drenar. No reconecta (eso es del llamador). */
 /**
@@ -230,7 +233,7 @@ async function confirmar(deps, entry, rev, blobIdHex) {
  * proceso node que reenvía cada request) y el navegador se ahogan: medido 330 ms por PUT
  * contra 6 ms del server. Ocho en vuelo mantienen el pipelining sin saturar al que media.
  */
-const CONCURRENCIA_PUT = 16;
+const CONCURRENCIA_PUT = 24;
 async function enTandas(items, limite, fn) {
     const resultado = new Array(items.length);
     let siguiente = 0;
@@ -310,18 +313,13 @@ export async function pushOnce(deps) {
         // Una revisión POR LOTE (no por op): el server agrupa las ops del batch bajo la misma
         // rev (el modelo del restore masivo: "comparte batch_id y revisión"). Todas las
         // entradas se confirman con `ack.rev`; el head avanza una sola vez.
+        //
+        // TODO el lote se confirma en UNA transacción de IndexedDB (base + índice + outbox +
+        // checkpoint): antes cada nota pagaba 4 transacciones (~16,5 ms) y era el piso del T1.
         const tConfirmar = performance.now();
-        for (let i = 0; i < lote.length; i += 1) {
-            await confirmar(deps, lote[i], ack.rev, construidas[i].blobIdHex);
-        }
-        marcarFase('confirmar', performance.now() - tConfirmar);
-        // La revisión quedó reconciliada: el disco YA la refleja (la subimos nosotros) y el CAS
-        // garantiza que no salteamos revisiones ajenas (si otro device hubiera commiteado entre
-        // medio, el ack habría sido un conflicto). El checkpoint avanza acá TAMBIÉN: si solo
-        // avanzara por `completeApply`, el próximo push usaría una base vieja y chocaría contra
-        // nuestras PROPIAS revisiones. Una escritura por LOTE, no por entrada.
         const minRev = (await store.readCheckpoint().catch(() => null))?.minRev ?? null;
-        await store.writeCheckpoint({ since: ack.rev, minRev, updatedAt: Date.now() });
+        await store.confirmarLote(lote.map((entry, i) => datosDeConfirmacion(entry, ack.rev, construidas[i].blobIdHex)), { since: ack.rev, minRev });
+        marcarFase('confirmar', performance.now() - tConfirmar);
         head = ack.rev;
         empujadas += lote.length;
     };

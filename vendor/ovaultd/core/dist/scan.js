@@ -78,7 +78,7 @@ contenidos) {
     // Reads MASIVOS: los archivos nuevos o cambiados se leen en tandas (un round-trip por
     // lote de 100) en vez de uno por archivo contra el puente (~30 ms cada uno: el cuello
     // que quedaba en la primera subida). Sin `readMany` en el port, bucle clásico.
-    const LOTE_LECTURA = 100;
+    const LOTE_LECTURA = 150;
     const leidos = new Map();
     if (port.readMany && porLeer.length > 0) {
         for (let i = 0; i < porLeer.length; i += LOTE_LECTURA) {

@@ -6487,7 +6487,7 @@
       }
       porLeer.push({ rel, stat });
     }
-    const LOTE_LECTURA = 100;
+    const LOTE_LECTURA = 150;
     const leidos = /* @__PURE__ */ new Map();
     if (port.readMany && porLeer.length > 0) {
       for (let i = 0; i < porLeer.length; i += LOTE_LECTURA) {
@@ -6791,7 +6791,7 @@
   // src/push.ts
   var CERO32 = new Uint8Array(32);
   var CERO64 = new Uint8Array(64);
-  var TAMANO_LOTE = 250;
+  var TAMANO_LOTE = 1e3;
   function enLotes(items, tamano) {
     const lotes = [];
     for (let i = 0; i < items.length; i += tamano) lotes.push(items.slice(i, i + tamano));
@@ -6825,15 +6825,13 @@
       borrados: deletesBloqueados > 0 ? [] : diffBase.borrados
     };
     let encoladas = 0;
+    const pendientesDeEncolar = [];
     const encolar = async (entry) => {
       const tGet = performance.now();
       const yaEsta = await store2.getOutbox(entry.operationId);
       marcarFase("getOutbox", performance.now() - tGet);
       if (yaEsta) return;
-      const tEncolar = performance.now();
-      await store2.putOutbox(entry);
-      marcarFase("encolar", performance.now() - tEncolar);
-      encoladas += 1;
+      pendientesDeEncolar.push(entry);
     };
     for (const archivo of diff.nuevos) {
       const tLeer = performance.now();
@@ -6879,6 +6877,10 @@
         })
       );
     }
+    const tEncolar = performance.now();
+    await store2.putOutboxMany(pendientesDeEncolar);
+    marcarFase("encolar", performance.now() - tEncolar);
+    encoladas += pendientesDeEncolar.length;
     return {
       diff: {
         nuevos: diff.nuevos.length,
@@ -6951,33 +6953,31 @@
     };
     return { op, blobIdHex };
   }
-  async function confirmar(deps, entry, rev, blobIdHex) {
-    const { store: store2 } = deps;
+  function datosDeConfirmacion(entry, rev, blobIdHex) {
     const esDel = entry.kind === "del";
-    await store2.putBase({
-      pathId: entry.pathId,
-      rev,
-      blobId: esDel ? null : blobIdHex,
-      contentHash: esDel ? null : entry.snapshotHash ?? null
-    });
-    const path = entry.path ?? (await store2.getIndex(entry.pathId))?.path;
-    await store2.putIndex({
-      pathId: entry.pathId,
-      path,
-      kind: "file",
-      deleted: esDel,
-      rev,
-      blobId: esDel ? null : blobIdHex,
-      size: entry.snapshot ? entry.snapshot.size : null,
-      // El mtime REAL del archivo (no el de encolado): es lo que compara el escaneo
-      // incremental para decidir si puede reusar el hash sin leer el contenido.
-      mtime: entry.mtimeMs ?? entry.queuedAt,
-      contentHash: esDel ? null : entry.snapshotHash ?? null
-    });
-    await store2.setOutboxState(entry.operationId, "confirmed");
-    await store2.deleteOutbox(entry.operationId);
+    return {
+      entry,
+      base: {
+        pathId: entry.pathId,
+        rev,
+        blobId: esDel ? null : blobIdHex,
+        contentHash: esDel ? null : entry.snapshotHash ?? null
+      },
+      index: {
+        pathId: entry.pathId,
+        // El path ya viene en la entrada (lo puso el diff).
+        path: entry.path ?? "",
+        kind: "file",
+        deleted: esDel,
+        rev,
+        blobId: esDel ? null : blobIdHex,
+        size: entry.snapshot ? entry.snapshot.size : null,
+        mtime: entry.mtimeMs ?? entry.queuedAt,
+        contentHash: esDel ? null : entry.snapshotHash ?? null
+      }
+    };
   }
-  var CONCURRENCIA_PUT = 16;
+  var CONCURRENCIA_PUT = 24;
   async function enTandas(items, limite, fn) {
     const resultado = new Array(items.length);
     let siguiente = 0;
@@ -7038,12 +7038,12 @@
       const ack = await deps.conn.commit(batch);
       marcarFase("commit", performance.now() - tCommit);
       const tConfirmar = performance.now();
-      for (let i = 0; i < lote.length; i += 1) {
-        await confirmar(deps, lote[i], ack.rev, construidas[i].blobIdHex);
-      }
-      marcarFase("confirmar", performance.now() - tConfirmar);
       const minRev = (await store2.readCheckpoint().catch(() => null))?.minRev ?? null;
-      await store2.writeCheckpoint({ since: ack.rev, minRev, updatedAt: Date.now() });
+      await store2.confirmarLote(
+        lote.map((entry, i) => datosDeConfirmacion(entry, ack.rev, construidas[i].blobIdHex)),
+        { since: ack.rev, minRev }
+      );
+      marcarFase("confirmar", performance.now() - tConfirmar);
       head = ack.rev;
       empujadas += lote.length;
     };
@@ -7538,6 +7538,14 @@
     async putOutbox(entry) {
       await this.db.put("outbox", entry);
     }
+    /** Encola varias entradas en UNA transacción (el push inicial encola cientos de golpe). */
+    async putOutboxMany(entries) {
+      if (entries.length === 0) return;
+      const tx = this.db.transaction("outbox", "readwrite");
+      const store2 = tx.objectStore("outbox");
+      for (const entry of entries) await store2.put(entry);
+      await tx.done;
+    }
     async getOutbox(operationId) {
       return await this.db.get("outbox", operationId) ?? null;
     }
@@ -7555,6 +7563,31 @@
       const updated = { ...entry, state };
       await this.db.put("outbox", updated);
       return updated;
+    }
+    /**
+     * Confirmación de un LOTE del push en UNA transacción de IndexedDB: base + índice +
+     * outbox (borrado) + checkpoint. Antes eran 4 transacciones POR NOTA (~16,5 ms cada
+     * una: el piso medido del T1); acá el lote entero paga el costo fijo UNA vez.
+     * Es atómica: si el proceso muere, o se confirma el lote entero o nada (las entradas
+     * siguen en `sent` y el reintento es idempotente).
+     */
+    async confirmarLote(items, checkpoint) {
+      const tx = this.db.transaction(["base", "index", "outbox", "checkpoint"], "readwrite");
+      const base = tx.objectStore("base");
+      const index = tx.objectStore("index");
+      const outbox = tx.objectStore("outbox");
+      for (const item of items) {
+        await base.put(item.base);
+        await index.put(item.index);
+        await outbox.delete(item.entry.operationId);
+      }
+      await tx.objectStore("checkpoint").put({
+        id: "checkpoint",
+        since: checkpoint.since,
+        minRev: checkpoint.minRev,
+        updatedAt: Date.now()
+      });
+      await tx.done;
     }
     // ------------------------------------------------------------------ transfers
     async putTransfer(entry) {

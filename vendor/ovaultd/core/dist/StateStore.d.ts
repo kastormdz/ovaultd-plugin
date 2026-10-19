@@ -134,12 +134,29 @@ export declare class StateStore {
     deleteBase(pathId: string): Promise<void>;
     listBase(): Promise<BaseEntry[]>;
     putOutbox(entry: OutboxEntry): Promise<void>;
+    /** Encola varias entradas en UNA transacción (el push inicial encola cientos de golpe). */
+    putOutboxMany(entries: OutboxEntry[]): Promise<void>;
     getOutbox(operationId: string): Promise<OutboxEntry | null>;
     /** Outbox en orden FIFO de encolado (cola serial). */
     listOutbox(): Promise<OutboxEntry[]>;
     deleteOutbox(operationId: string): Promise<void>;
     /** Transición de estado de una operación (pending → sent → confirmed). */
     setOutboxState(operationId: string, state: OutboxEntry['state']): Promise<OutboxEntry>;
+    /**
+     * Confirmación de un LOTE del push en UNA transacción de IndexedDB: base + índice +
+     * outbox (borrado) + checkpoint. Antes eran 4 transacciones POR NOTA (~16,5 ms cada
+     * una: el piso medido del T1); acá el lote entero paga el costo fijo UNA vez.
+     * Es atómica: si el proceso muere, o se confirma el lote entero o nada (las entradas
+     * siguen en `sent` y el reintento es idempotente).
+     */
+    confirmarLote(items: Array<{
+        entry: OutboxEntry;
+        base: BaseEntry;
+        index: IndexEntry;
+    }>, checkpoint: {
+        since: number;
+        minRev: number | null;
+    }): Promise<void>;
     putTransfer(entry: TransferEntry): Promise<void>;
     getTransfer(transferId: string): Promise<TransferEntry | null>;
     listTransfers(): Promise<TransferEntry[]>;

@@ -6,6 +6,15 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 (mismo `MAJOR.MINOR` = pareja probada junta; ver ADR-0018 y la sección «Compatibility» del
 README).
 
+## [0.2.25] — 2026-10-19
+
+### Changed
+
+- **Núcleo sincronizado (transacciones por lote)**: `confirmarLote` y `putOutboxMany`
+  escriben base + índice + outbox + checkpoint del lote en UNA transacción de IndexedDB
+  (antes 4 por nota) y los lotes suben hasta 1000 ops. En el CLI el T1 bajó de 63,8 s a
+  **37,1 s**; en Obsidian el efecto es menor pero los lotes grandes también aplican.
+
 ## [0.2.24] — 2026-10-19
 
 ### Changed
