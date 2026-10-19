@@ -6375,7 +6375,8 @@
       queuedAt: req.queuedAt ?? Date.now(),
       snapshot,
       snapshotHash: req.contentHash ?? null,
-      state: "pending"
+      state: "pending",
+      mtimeMs: req.mtimeMs ?? null
     };
   }
 
@@ -6438,7 +6439,7 @@
   var estaExcluido = (path, configDir = ".obsidian") => motivoDeExclusion(path, configDir) !== null;
 
   // src/scan.ts
-  async function escanearVault(port, keys, dir = "") {
+  async function escanearVault(port, keys, dir = "", cache) {
     const salida = [];
     const recorrer = async (relDir) => {
       const listado = await port.list(relDir === "" ? "." : relDir);
@@ -6450,8 +6451,19 @@
           continue;
         }
         if (!entrada.isFile) continue;
-        const bytes = await port.read(rel);
         const stat = await port.stat(rel);
+        const recordado = cache?.get(rel);
+        if (recordado && stat && recordado.contentHash != null && recordado.mtime === stat.mtimeMs && recordado.size === stat.size) {
+          salida.push({
+            path: rel,
+            pathId: toHex(pathId(keys, rel)),
+            contentHash: recordado.contentHash,
+            size: stat.size,
+            mtimeMs: stat.mtimeMs
+          });
+          continue;
+        }
+        const bytes = await port.read(rel);
         salida.push({
           path: rel,
           pathId: toHex(pathId(keys, rel)),
@@ -6733,6 +6745,12 @@
   // src/push.ts
   var CERO32 = new Uint8Array(32);
   var CERO64 = new Uint8Array(64);
+  var TAMANO_LOTE = 50;
+  function enLotes(items, tamano) {
+    const lotes = [];
+    for (let i = 0; i < items.length; i += tamano) lotes.push(items.slice(i, i + tamano));
+    return lotes;
+  }
   var operacionBytes = (operationId) => {
     const hex = operationId.replace(/-/g, "");
     if (!/^[0-9a-fA-F]{32}$/.test(hex)) {
@@ -6742,7 +6760,13 @@
   };
   async function encolarDiff(deps, head) {
     const { store: store2, port, keys } = deps;
-    const entradas = await escanearVault(port, keys);
+    const cache = new Map(
+      (await store2.listIndex()).map((entrada) => [
+        entrada.path ?? "",
+        { mtime: entrada.mtime ?? null, size: entrada.size ?? null, contentHash: entrada.contentHash ?? null }
+      ])
+    );
+    const entradas = await escanearVault(port, keys, "", cache);
     const diffBase = await diffLocal(store2, entradas);
     const deletesBloqueados = entradas.length === 0 ? diffBase.borrados.length : 0;
     const diff = {
@@ -6764,7 +6788,8 @@
           pathId: archivo.pathId,
           expectedRev: head,
           contentB64: b64Encode(bytes),
-          contentHash: archivo.contentHash
+          contentHash: archivo.contentHash,
+          mtimeMs: archivo.mtimeMs
         })
       );
     }
@@ -6777,7 +6802,8 @@
           pathId: archivo.pathId,
           expectedRev: head,
           contentB64: b64Encode(bytes),
-          contentHash: archivo.contentHash
+          contentHash: archivo.contentHash,
+          mtimeMs: archivo.mtimeMs
         })
       );
     }
@@ -6803,7 +6829,7 @@
       deletesBloqueados
     };
   }
-  async function construirOp(deps, entry, expectedRev) {
+  async function construirOp(deps, entry, expectedRev, operationId) {
     const { conn, keys, vaultUuid, epoch } = deps;
     const identidad = identityFromSubkeys(keys);
     const pathIdBytes = fromHex(entry.pathId);
@@ -6841,7 +6867,7 @@
       // (`op.mtime.unwrap_or(0)`) — firmar con el queuedAt delata la firma.
       esDel ? 0 : entry.queuedAt,
       expectedRev,
-      operacionBytes(entry.operationId),
+      operationId,
       epoch
     );
     const op = {
@@ -6877,7 +6903,9 @@
       rev,
       blobId: esDel ? null : blobIdHex,
       size: entry.snapshot ? entry.snapshot.size : null,
-      mtime: entry.queuedAt,
+      // El mtime REAL del archivo (no el de encolado): es lo que compara el escaneo
+      // incremental para decidir si puede reusar el hash sin leer el contenido.
+      mtime: entry.mtimeMs ?? entry.queuedAt,
       contentHash: esDel ? null : entry.snapshotHash ?? null
     });
     await store2.setOutboxState(entry.operationId, "confirmed");
@@ -6891,40 +6919,54 @@
     const { diff, encoladas, deletesBloqueados } = await encolarDiff(deps, head);
     let empujadas = 0;
     const pendientes = (await store2.listOutbox()).filter((entry) => entry.state !== "confirmed").sort((a, b) => a.queuedAt - b.queuedAt);
-    for (const entry of pendientes) {
-      let blobIdHex = null;
+    const subir = async (lote) => {
+      const operationIdDelLote = lote[0].operationId;
+      const operacionDelLote = operacionBytes(operationIdDelLote);
+      const construidas = await Promise.all(
+        lote.map((entry) => construirOp(deps, entry, head, operacionDelLote))
+      );
+      const batch = {
+        t: "batch",
+        batch_id: bytesToUuid(cryptoProvider().randomBytes(16)),
+        operation_id: operationIdDelLote,
+        expected_rev: head,
+        ops: construidas.map((construida) => construida.op)
+      };
+      for (const entry of lote) await store2.setOutboxState(entry.operationId, "sent");
+      const ack = await deps.conn.commit(batch);
+      for (let i = 0; i < lote.length; i += 1) {
+        await confirmar(deps, lote[i], ack.rev, construidas[i].blobIdHex);
+      }
+      head = ack.rev;
+      empujadas += lote.length;
+    };
+    for (const lote of enLotes(pendientes, TAMANO_LOTE)) {
       try {
-        const construida = await construirOp(deps, entry, head);
-        blobIdHex = construida.blobIdHex;
-        const batch = {
-          t: "batch",
-          batch_id: bytesToUuid(cryptoProvider().randomBytes(16)),
-          operation_id: entry.operationId,
-          expected_rev: head,
-          ops: [construida.op]
-        };
-        await store2.setOutboxState(entry.operationId, "sent");
-        const ack = await deps.conn.commit(batch);
-        head = ack.rev;
-        await confirmar(deps, entry, ack.rev, blobIdHex);
-        empujadas += 1;
+        await subir(lote);
       } catch (error) {
-        if (error instanceof SyncConflictError) {
-          await store2.setOutboxState(entry.operationId, "pending");
-          return {
-            diff,
-            encoladas,
-            empujadas,
-            headRev: head,
-            deletesBloqueados,
-            conflicto: {
-              operationId: entry.operationId,
-              path: entry.path,
-              mensaje: error.message
+        if (!(error instanceof SyncConflictError)) throw error;
+        for (const entry of lote) {
+          try {
+            await subir([entry]);
+          } catch (fallo) {
+            if (fallo instanceof SyncConflictError) {
+              await store2.setOutboxState(entry.operationId, "pending");
+              return {
+                diff,
+                encoladas,
+                empujadas,
+                headRev: head,
+                deletesBloqueados,
+                conflicto: {
+                  operationId: entry.operationId,
+                  path: entry.path,
+                  mensaje: fallo.message
+                }
+              };
             }
-          };
+            throw fallo;
+          }
         }
-        throw error;
       }
     }
     return { diff, encoladas, empujadas, headRev: head, deletesBloqueados };

@@ -39,7 +39,11 @@ export interface DiffLocal {
     yaEncolados: number;
 }
 /** Recorre el vault completo (recursivo) y devuelve los archivos con su hash. */
-export declare function escanearVault(port: FileSystemPort, keys: SubKeys, dir?: string): Promise<EntradaEscaneada[]>;
+export declare function escanearVault(port: FileSystemPort, keys: SubKeys, dir?: string, cache?: Map<string, {
+    mtime: number | null;
+    size: number | null;
+    contentHash: string | null;
+}>): Promise<EntradaEscaneada[]>;
 /** Diff contra la base: qué falta empujar, con la outbox pendiente como filtro. */
 export declare function diffLocal(store: StateStore, entradas: EntradaEscaneada[]): Promise<DiffLocal>;
 /** Resumen humano del diff (lo usan `list-local` y los reportes de sync). */

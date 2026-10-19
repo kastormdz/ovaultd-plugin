@@ -6,6 +6,16 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 (mismo `MAJOR.MINOR` = pareja probada junta; ver ADR-0018 y la sección «Compatibility» del
 README).
 
+## [0.2.21] — 2026-10-19
+
+### Changed
+
+- **Subidas agrupadas y escaneo incremental** (núcleo 0.2.20): el push manda lotes de hasta
+  50 operaciones en un solo commit (UNA revisión por lote) con los PUT de blobs en paralelo,
+  y el escaneo reusa el hash del índice cuando mtime+size no cambiaron. En un vault de 1000
+  notas / 100 MB: la subida inicial baja de 99 a 72 s, el ciclo en reposo de 8,6 a 3,4 s y
+  el delta de un cambio de 8,7 a 3,4 s (bench del 2026-10-19, `docs/benchmarks.md`).
+
 ## [0.2.20] — 2026-10-19
 
 ### Added

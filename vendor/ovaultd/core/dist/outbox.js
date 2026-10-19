@@ -71,6 +71,7 @@ export function prepareOutboxEntry(req) {
         snapshot,
         snapshotHash: req.contentHash ?? null,
         state: 'pending',
+        mtimeMs: req.mtimeMs ?? null,
     };
 }
 //# sourceMappingURL=outbox.js.map

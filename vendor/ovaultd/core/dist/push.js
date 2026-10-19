@@ -25,6 +25,18 @@ import { diffLocal, escanearVault } from './scan.js';
 import { SyncConflictError } from './SyncConnection.js';
 const CERO32 = new Uint8Array(32);
 const CERO64 = new Uint8Array(64);
+/**
+ * Ops por batch. El server acepta hasta MAX_BATCH_OPS (1000); 50 mantiene los lotes
+ * chicos (un conflicto aisla menos trabajo) sin perder la ganancia de round-trips.
+ */
+const TAMANO_LOTE = 50;
+/** Parte una lista en lotes de a lo sumo `tamano`. */
+function enLotes(items, tamano) {
+    const lotes = [];
+    for (let i = 0; i < items.length; i += tamano)
+        lotes.push(items.slice(i, i + tamano));
+    return lotes;
+}
 /** `operation_id` textual (UUID) → los 16 bytes que firma `msg_rec`. */
 const operacionBytes = (operationId) => {
     const hex = operationId.replace(/-/g, '');
@@ -39,7 +51,13 @@ const operacionBytes = (operationId) => {
  */
 async function encolarDiff(deps, head) {
     const { store, port, keys } = deps;
-    const entradas = await escanearVault(port, keys);
+    // Cache del escaneo incremental: el índice guarda mtime+size+hash de lo último visto
+    // (el push lo escribe al confirmar); si nada cambió, el scan no lee el contenido.
+    const cache = new Map((await store.listIndex()).map((entrada) => [
+        entrada.path ?? '',
+        { mtime: entrada.mtime ?? null, size: entrada.size ?? null, contentHash: entrada.contentHash ?? null },
+    ]));
+    const entradas = await escanearVault(port, keys, '', cache);
     const diffBase = await diffLocal(store, entradas);
     // Un cliente VACÍO no borra el remoto (aceptación de fase 3): sin un solo archivo en
     // disco, los deletes del diff no son una intención — se bloquean y se informan.
@@ -65,6 +83,7 @@ async function encolarDiff(deps, head) {
             expectedRev: head,
             contentB64: b64Encode(bytes),
             contentHash: archivo.contentHash,
+            mtimeMs: archivo.mtimeMs,
         }));
     }
     for (const archivo of diff.modificados) {
@@ -76,6 +95,7 @@ async function encolarDiff(deps, head) {
             expectedRev: head,
             contentB64: b64Encode(bytes),
             contentHash: archivo.contentHash,
+            mtimeMs: archivo.mtimeMs,
         }));
     }
     for (const borrado of diff.borrados) {
@@ -99,7 +119,14 @@ async function encolarDiff(deps, head) {
     };
 }
 /** Construye la operación del wire (cifra + firma) para una entrada de outbox. */
-async function construirOp(deps, entry, expectedRev) {
+async function construirOp(deps, entry, expectedRev, 
+/**
+ * `operation_id` CON EL QUE SE FIRMA: el del BATCH. El `msg_rec` lo incluye, y el
+ * server verifica cada op del lote contra el `operation_id` del batch — firmar con el
+ * de la entrada individual delata la firma (unauthorized) en cuanto el lote trae más
+ * de una operación.
+ */
+operationId) {
     const { conn, keys, vaultUuid, epoch } = deps;
     const identidad = identityFromSubkeys(keys);
     const pathIdBytes = fromHex(entry.pathId);
@@ -127,7 +154,7 @@ async function construirOp(deps, entry, expectedRev) {
     const sig = signRecord(identidad, pathIdBytes, blobIdBytes, tmacBytes, signOpCode(entry.kind), tamano, 
     // Un `del` no lleva mtime en el wire: el server reconstruye el mensaje con 0
     // (`op.mtime.unwrap_or(0)`) — firmar con el queuedAt delata la firma.
-    esDel ? 0 : entry.queuedAt, expectedRev, operacionBytes(entry.operationId), epoch);
+    esDel ? 0 : entry.queuedAt, expectedRev, operationId, epoch);
     const op = {
         op: entry.kind,
         path_id: b64Encode(pathIdBytes),
@@ -162,7 +189,9 @@ async function confirmar(deps, entry, rev, blobIdHex) {
         rev,
         blobId: esDel ? null : blobIdHex,
         size: entry.snapshot ? entry.snapshot.size : null,
-        mtime: entry.queuedAt,
+        // El mtime REAL del archivo (no el de encolado): es lo que compara el escaneo
+        // incremental para decidir si puede reusar el hash sin leer el contenido.
+        mtime: entry.mtimeMs ?? entry.queuedAt,
         contentHash: esDel ? null : (entry.snapshotHash ?? null),
     });
     await store.setOutboxState(entry.operationId, 'confirmed');
@@ -184,43 +213,73 @@ export async function pushOnce(deps) {
     const pendientes = (await store.listOutbox())
         .filter((entry) => entry.state !== 'confirmed')
         .sort((a, b) => a.queuedAt - b.queuedAt);
-    for (const entry of pendientes) {
-        let blobIdHex = null;
-        try {
-            const construida = await construirOp(deps, entry, head);
-            blobIdHex = construida.blobIdHex;
-            const batch = {
-                t: 'batch',
-                batch_id: bytesToUuid(cryptoProvider().randomBytes(16)),
-                operation_id: entry.operationId,
-                expected_rev: head,
-                ops: [construida.op],
-            };
-            // Persistir el estado ANTES de mandar: un crash entre commit y ack deja la
-            // entrada en `sent` y el reintento reusa la MISMA operación (idempotente).
+    /**
+     * Sube un grupo de operaciones en UN batch (el server valida `expected_rev` una sola vez
+     * para todo el lote y asigna las revisiones consecutivas: sigue habiendo UNA por op, así
+     * que el history, el delta y los expected_rev no cambian). Las operaciones se construyen
+     * EN PARALELO: cada una cifra, sube su blob por HTTP PUT y firma — los PUTs concurrentes
+     * son el grueso de la ganancia en la subida inicial.
+     */
+    const subir = async (lote) => {
+        // El `msg_rec` firma el operation_id DEL BATCH: todas las ops se firman con el mismo
+        // (el de la primera entrada — estable, así el retry de un lote es idempotente).
+        const operationIdDelLote = lote[0].operationId;
+        const operacionDelLote = operacionBytes(operationIdDelLote);
+        const construidas = await Promise.all(lote.map((entry) => construirOp(deps, entry, head, operacionDelLote)));
+        const batch = {
+            t: 'batch',
+            batch_id: bytesToUuid(cryptoProvider().randomBytes(16)),
+            operation_id: operationIdDelLote,
+            expected_rev: head,
+            ops: construidas.map((construida) => construida.op),
+        };
+        // Persistir el estado ANTES de mandar: un crash entre commit y ack deja las entradas
+        // en `sent` y el reintento reusa la MISMA operación (idempotente).
+        for (const entry of lote)
             await store.setOutboxState(entry.operationId, 'sent');
-            const ack = await deps.conn.commit(batch);
-            head = ack.rev;
-            await confirmar(deps, entry, ack.rev, blobIdHex);
-            empujadas += 1;
+        const ack = await deps.conn.commit(batch);
+        // Una revisión POR LOTE (no por op): el server agrupa las ops del batch bajo la misma
+        // rev (el modelo del restore masivo: "comparte batch_id y revisión"). Todas las
+        // entradas se confirman con `ack.rev`; el head avanza una sola vez.
+        for (let i = 0; i < lote.length; i += 1) {
+            await confirmar(deps, lote[i], ack.rev, construidas[i].blobIdHex);
+        }
+        head = ack.rev;
+        empujadas += lote.length;
+    };
+    for (const lote of enLotes(pendientes, TAMANO_LOTE)) {
+        try {
+            await subir(lote);
         }
         catch (error) {
-            if (error instanceof SyncConflictError) {
-                await store.setOutboxState(entry.operationId, 'pending');
-                return {
-                    diff,
-                    encoladas,
-                    empujadas,
-                    headRev: head,
-                    deletesBloqueados,
-                    conflicto: {
-                        operationId: entry.operationId,
-                        path: entry.path,
-                        mensaje: error.message,
-                    },
-                };
+            if (!(error instanceof SyncConflictError))
+                throw error;
+            // Un conflicto rechaza el lote ENTERO (el server es todo-o-nada). Se aísla
+            // reintentando de a una: la que conflictúa queda `pending` y el report la nombra;
+            // las demás (sin conflicto) se confirman igual.
+            for (const entry of lote) {
+                try {
+                    await subir([entry]);
+                }
+                catch (fallo) {
+                    if (fallo instanceof SyncConflictError) {
+                        await store.setOutboxState(entry.operationId, 'pending');
+                        return {
+                            diff,
+                            encoladas,
+                            empujadas,
+                            headRev: head,
+                            deletesBloqueados,
+                            conflicto: {
+                                operationId: entry.operationId,
+                                path: entry.path,
+                                mensaje: fallo.message,
+                            },
+                        };
+                    }
+                    throw fallo;
+                }
             }
-            throw error;
         }
     }
     return { diff, encoladas, empujadas, headRev: head, deletesBloqueados };

@@ -28,6 +28,8 @@ export interface EnqueueRequest {
     contentHash?: string | null;
     /** Milisegundos de encolado (default: ahora). */
     queuedAt?: number;
+    /** mtime del archivo al encolar (cache del escaneo incremental). */
+    mtimeMs?: number;
 }
 /** `operation_id` determinista por payload (16 B → UUID textual). */
 export declare function operationIdFor(req: EnqueueRequest): string;
