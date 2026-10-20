@@ -1,64 +1,46 @@
 # oVaultd Sync
 
-The Obsidian plugin for **ovaultd** — self-hosted, end-to-end encrypted sync for your vault: [github.com/kastormdz/ovaultd](https://github.com/kastormdz/ovaultd).
+This is the Obsidian side of [ovaultd](https://github.com/kastormdz/ovaultd): the plugin that syncs your vault against your own server, inside the editor, with the keys never leaving your machine.
 
-Everything runs inside Obsidian. The plugin embeds the same durable core as the CLI (versioned IndexedDB state, save-first outbox, apply journal), so your vault stays in sync with your own server — and the server never sees your notes: content and paths are encrypted on your device with keys derived from your vault password, which never leaves it.
+The plugin is not a thin HTTP client. It embeds the same durable core as the CLI: a versioned IndexedDB state store, a save-first outbox, an apply journal and the same sync session. So the plugin and the CLI are two windows onto one engine, not two implementations that drift apart.
 
-The server, the shared libraries (`@ovaultd/protocol`, `@ovaultd/crypto`, `@ovaultd/core`) and the CLI live in the main repository. This repository holds the plugin alone — the community directory requires the manifest and the release assets at the root of the submitted repository.
+The server, the shared libraries (`@ovaultd/protocol`, `@ovaultd/crypto`, `@ovaultd/core`) and the CLI live in the main repository. This one holds the plugin alone, because the community directory wants the manifest and the release assets at the root of the submitted repository.
 
 ## What it does
 
-- **Event-driven sync.** Vault changes are coalesced, then a debounced `pull → push` cycle runs under a lock. No timers, no polling: a change is what wakes it up. The status bar shows its state (`al día`, `sincronizando…`, `⚠ conflictos`, `error`).
-- **Explicit conflicts, never silent overwrites.** When the same file changed on two devices, the plugin reports the conflict and asks: keep your local version or take the remote one. Neither side is discarded without your say-so.
-- **Vault management from the settings tab.** Create a vault, link an existing one, unlink the folder, delete a vault (typing its name to confirm), recover access with the recovery key when the vault password is lost, and change the vault password.
-- **Export / import.** Write the remote vault to a local folder, or import a folder into the vault. The portable validation runs before anything is written.
-- **Mobile-grade by construction.** The bundle keeps `obsidian`/`electron` external and **fails the build** if any Node builtin (`fs`, `path`, `child_process`, …) leaks in — the same `main.js` must run on mobile, where Node does not exist. Crypto, state and sync are plain browser JavaScript.
-- **Durable, bounded local state.** The engine's state lives in IndexedDB; the plugin folder keeps a small `estado-local.json` (account token, vault id/epoch, derived subkeys), `sesion-cuenta.json` (your account session, survives unlinking) and a bounded `motor.log`. Passwords are never written to disk.
+Sync is event driven. Vault changes are coalesced, then a debounced `pull` and `push` cycle runs under a lock, so there are no timers and no polling: a change is what wakes it up. The status bar tells you where it stands (`al día`, `sincronizando…`, `⚠ conflictos`, `error`).
+
+When the same file changed on two devices, the plugin tells you and asks. Keep your version or take the remote one; neither side disappears without your say-so. If several files are conflicted, you can resolve them one by one or apply the same choice to all of them.
+
+Vault management lives in the settings tab: create a vault, link an existing one, unlink this folder, delete a vault by typing its name, recover access with the recovery key when the vault password is lost, and change the vault password. Export writes the remote vault to a folder you pick; import reads one into the vault, after the portable path validation runs.
+
+The bundle keeps `obsidian` and `electron` external and fails the build if any Node builtin (`fs`, `path`, `child_process`, …) leaks in. The same `main.js` has to run on mobile, where Node does not exist, so crypto, state and sync are plain browser JavaScript.
+
+Local state stays small and bounded: IndexedDB for the engine, a `estado-local.json` for the account token, vault id/epoch and derived subkeys, a `sesion-cuenta.json` for the account session, and a capped `motor.log`. Passwords are never written to disk.
 
 ## How sync works, in one paragraph
 
-Your vault password is stretched into a KEK, which unwraps the vault key; from those, per-content keys and signing keys are derived. Changed files are encrypted and uploaded as opaque blobs; the server stores them with signed revision records chained by `expected_rev`. Pulling is a delta since your last known revision; pushing signs every operation. If someone else edited ahead of you, you get a conflict instead of a lost edit.
+Your vault password is stretched into a KEK, which unwraps the vault key. From those, per-content keys and signing keys are derived. Changed files are encrypted and uploaded as opaque blobs; the server stores them with signed revision records chained by `expected_rev`. Pulling is a delta since your last known revision, pushing signs every operation. If someone edited ahead of you, you get a conflict instead of a lost edit.
 
-## Compatibility
+## Versions
 
-The plugin travels on a **release train** with the server: the same `MAJOR.MINOR` on both sides is a pair that was tested together (patches are independent).
+The plugin travels on a release train with the server: the same `MAJOR.MINOR` on both sides is a pair that was tested together, and patches are independent.
 
 | Server | Plugin | Wire |
 |---|---|---|
 | `0.2.x` | `0.2.x` | `v2` |
 
-Before linking anything, the plugin asks the server `GET /api/v1/meta` and checks that contract: if the server requires a newer plugin than this one, it refuses to link and says so (with a message pointing at the plugin); if this plugin is a train ahead, it warns once and goes on. It also identifies itself on every request with `x-ovaultd-client: oVaultd-plugin/<version>`, so the server's logs show which client is talking.
-
-## Releases
-
-Releases are cut by tag: `X.Y.Z` — exactly the version in `manifest.json`, no prefix, which is what the community directory requires. The GitHub Release carries `main.js`, `manifest.json` and `styles.css` as loose binary assets (signed with a build-provenance attestation), so Obsidian can install it directly, and so can BRAT.
-
-Unpack those three files into `<vault>/.obsidian/plugins/ovaultd/`, or point BRAT at this repository. What changed in each version lives in [CHANGELOG.md](CHANGELOG.md), and the release notes are taken from there.
-
-## Disclosures
-
-Following the community directory's [developer policies](https://docs.obsidian.md/community-directory/developer-policies):
-
-- **Network use.** The plugin talks **only** to the server URL you configure in its settings — the ovaultd server that you (or your operator) run. No third-party services, no analytics, no telemetry, no ads.
-- **Account required.** Syncing needs an account **on that server**; the first one is created in the browser at `/setup`. It never leaves your infrastructure.
-- **Files outside the vault.** The export command writes into a folder you pick and the import command reads from one. They only run when you invoke them, and nothing else reaches outside the vault.
-- **Licence.** MIT, source included in this repository.
-
-## Requirements
-
-- An **ovaultd server** ([main repository](https://github.com/kastormdz/ovaultd)) — a single container, published on loopback, behind your own reverse proxy.
-- An **account** on it: the first one is created in the browser at `/setup`; further accounts come from the admin panel or the `ovaultd-admin` CLI.
-- For building from source: Node 22+, and the main repository checked out as a sibling directory (`../ovaultd`) while `@ovaultd/*` is not published to npm.
+Before linking anything, the plugin asks the server `GET /api/v1/meta` and checks the contract. If the server requires a newer plugin than this one, it refuses to link and says so. If this plugin is one train ahead, it warns once and goes on. It also identifies itself on every request with `x-ovaultd-client: oVaultd-plugin/<version>`, so the server logs show which client is talking.
 
 ## Install
 
-From the community directory: **oVaultd Sync** — in Obsidian, Settings → Community plugins → Browse → search for it, then Install → Enable.
+From the community directory: in Obsidian, Settings, Community plugins, Browse, search for **oVaultd Sync**, then Install and Enable.
 
 [![oVaultd Sync in the community directory](https://img.shields.io/badge/Obsidian-community%20directory-7C3AED)](https://community.obsidian.md/plugins/ovaultd)
 
 Or link straight in: [`obsidian://show-plugin?id=ovaultd`](obsidian://show-plugin?id=ovaultd) · [community.obsidian.md/plugins/ovaultd](https://community.obsidian.md/plugins/ovaultd)
 
-Build it and install into a vault:
+To build it yourself and drop it into a vault:
 
 ```bash
 npm install
@@ -66,24 +48,39 @@ npm run build
 npm run install:dev -- --vault "$HOME/path/to/your/vault"
 ```
 
-Then enable it in Obsidian: Settings → Community plugins → **oVaultd Sync**. (The same three files — `main.js`, `manifest.json`, `styles.css` — can be copied by hand into `<vault>/.obsidian/plugins/ovaultd/`.)
+Then enable it in Obsidian under Settings, Community plugins. Hand copying works too: the three files (`main.js`, `manifest.json`, `styles.css`) go into `<vault>/.obsidian/plugins/ovaultd/`.
 
 ## Usage
 
-Settings → **oVaultd Sync**:
+Everything starts in Settings, **oVaultd Sync**:
 
-1. **Cuenta** — server URL, account email and account password. This is asked **once**: the session is reused from then on.
-2. **Tus vaults** — every vault on the account, with the actions for each one: link, recover access (with the recovery key), or delete. A new vault is created with **Crear vault nuevo…** (name + a vault password *you invent*; the recovery key is shown exactly once — store it somewhere safe).
-3. **Esta carpeta** — the linked vault: sync status, **Sincronizar ahora**, **Cambiar password…** and **Desvincular**.
+1. **Cuenta**: server URL, account email and account password. This is asked once; the session is reused after that.
+2. **Tus vaults**: every vault on the account, with the actions for each one. Link it, recover access with the recovery key, or delete it. **Crear vault nuevo…** asks for a name and a vault password you invent, and shows the recovery key exactly once.
+3. **Esta carpeta**: the linked vault, with the sync status, **Sincronizar ahora**, **Cambiar password…** and **Desvincular**.
 
-Two different secrets, easy to confuse: the **account** password (which the server knows how to verify) and the **vault** password (which the server never sees — it opens your notes). Losing the vault password is not fatal: the recovery key is the second lock.
+There are two secrets and they are easy to confuse. The account password is what the server verifies. The vault password is what opens your notes and never reaches the server. Losing the vault password is not fatal, because the recovery key is the second lock.
 
-Commands in the palette (Ctrl+P): *Probar conexión*, *Sincronizar ahora*, *Estado del motor*, *Exportar el vault a una carpeta…*, *Importar una carpeta al vault…*, *Resolver conflicto…*.
+The command palette (Ctrl+P) has *Probar conexión*, *Sincronizar ahora*, *Estado del motor*, *Exportar el vault a una carpeta…*, *Importar una carpeta al vault…* and *Resolver conflicto…*.
+
+## Network and privacy
+
+Following the community directory's [developer policies](https://docs.obsidian.md/community-directory/developer-policies):
+
+- The plugin talks only to the server URL you configure. That is your server, or the one your operator runs. No third-party services, no analytics, no telemetry, no ads.
+- Syncing needs an account on that server. The first one is created in the browser at `/setup`, and it never leaves your infrastructure.
+- Export writes into a folder you pick and import reads from one. They run only when you invoke them, and nothing else reaches outside the vault.
+- The server stores ciphertext, opaque path IDs and signed revision records. It cannot read your notes or your paths.
+
+## Requirements
+
+- An ovaultd server from the [main repository](https://github.com/kastormdz/ovaultd): one container, published on loopback, behind your own reverse proxy.
+- An account on it. The first one comes from `/setup` in the browser; the rest from the admin panel or the `ovaultd-admin` CLI.
+- To build from source: Node 22+, with the main repository checked out as a sibling directory (`../ovaultd`), because `@ovaultd/*` is not published to npm.
 
 ## Contributing
 
-Building the plugin, the vendored core, and the leak gate: [`docs/development.md`](docs/development.md).
+Building the plugin, refreshing the vendored core and running the leak gate: [docs/development.md](docs/development.md).
 
 ## License
 
-MIT — see `LICENSE`.
+MIT. See `LICENSE`.
