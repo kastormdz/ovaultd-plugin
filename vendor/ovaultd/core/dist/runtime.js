@@ -5815,23 +5815,6 @@
       return null;
     }
   };
-  function proyeccionDeApariencia(texto) {
-    const o = parsear(texto) ?? {};
-    const p = {};
-    for (const campo of CAMPOS_PORTABLES) {
-      const v = o[campo];
-      if (campo === "enabledCssSnippets" && Array.isArray(v)) {
-        p[campo] = [...v].map(String).sort();
-      } else if (v !== void 0) {
-        p[campo] = v;
-      }
-    }
-    return JSON.stringify(p);
-  }
-  function hashDePath(path, bytes) {
-    const datos = esApariencia(path) ? CODIFICADOR.encode(proyeccionDeApariencia(DECODIFICADOR.decode(bytes))) : bytes;
-    return toHex(cryptoProvider().sha256(datos));
-  }
   function mergeDeApariencia(base, local, remoto) {
     const l = parsear(local);
     const b = parsear(base);
@@ -6025,7 +6008,7 @@
       if (actual && actual.isFile) return { verdict: "blocked", reason: "un archivo local ocupa el camino" };
       return { verdict: "safe" };
     }
-    const hashActual = actual?.isFile ? hashDePath(revision.path, await port.read(revision.path)) : null;
+    const hashActual = actual?.isFile ? sha256Hex(await port.read(revision.path)) : null;
     if (revision.deleted) {
       if (!actual) return { verdict: "already-gone" };
       if (base?.contentHash && hashActual === base.contentHash) return { verdict: "safe" };
@@ -6056,7 +6039,7 @@
       const dec = new TextDecoder("utf-8", { fatal: true });
       const textoBase = dec.decode(decryptBlob(keys, storedBase));
       const bytesOurs = await port.read(revision.path);
-      const oursHash = hashDePath(revision.path, bytesOurs);
+      const oursHash = sha256Hex(bytesOurs);
       const textoOurs = dec.decode(bytesOurs);
       const textoTheirs = dec.decode(plaintextRemoto);
       if (esApariencia(revision.path)) {
@@ -6081,7 +6064,7 @@
     intent = {
       ...intent,
       tempName,
-      contentHash: hashDePath(revision.path, fusion.fusion),
+      contentHash: sha256Hex(fusion.fusion),
       state: "verified",
       mergeBase: {
         rev: revision.rev,
@@ -6598,7 +6581,7 @@
       salida.push({
         path: rel,
         pathId: toHex(pathId(keys, rel)),
-        contentHash: hashDePath(rel, bytes),
+        contentHash: toHex(cryptoProvider().sha256(bytes)),
         size: bytes.length,
         mtimeMs: stat.mtimeMs
       });

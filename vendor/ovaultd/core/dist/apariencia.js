@@ -13,8 +13,6 @@
  *  2. `mergeDeApariencia` — merge POR CAMPO en el apply. No es el 3-vías de texto: con
  *     JSON por líneas cualquier reformateo es conflicto.
  */
-import { cryptoProvider } from '@ovaultd/crypto';
-import { toHex } from '@ovaultd/protocol';
 /** Los únicos campos que viajan entre dispositivos. */
 const CAMPOS_PORTABLES = ['cssTheme', 'enabledCssSnippets'];
 const DECODIFICADOR = new TextDecoder();
@@ -47,17 +45,6 @@ export function proyeccionDeApariencia(texto) {
         }
     }
     return JSON.stringify(p);
-}
-/**
- * Hash de un archivo para el diff/apply. Para `appearance.json` es el hash de la
- * PROYECCIÓN: así el modo que Obsidian reescribe solo no se ve como una edición.
- * Para todo lo demás, el hash de los bytes.
- */
-export function hashDePath(path, bytes) {
-    const datos = esApariencia(path)
-        ? CODIFICADOR.encode(proyeccionDeApariencia(DECODIFICADOR.decode(bytes)))
-        : bytes;
-    return toHex(cryptoProvider().sha256(datos));
 }
 /**
  * Merge por campo: `{...local, ...portablesDelRemoto}`. Un campo portable solo se toma

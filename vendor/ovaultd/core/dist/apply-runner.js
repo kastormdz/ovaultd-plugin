@@ -18,7 +18,7 @@
 import { cryptoProvider, decryptBlob } from '@ovaultd/crypto';
 import { toHex } from '@ovaultd/protocol';
 import { createIntent } from './apply.js';
-import { esApariencia, hashDePath, mergeDeApariencia } from './apariencia.js';
+import { esApariencia, mergeDeApariencia } from './apariencia.js';
 import { esMergeablePorTipo, mergeDeTexto } from './merge.js';
 import { colisionDeCase, nombreBase, validarRutaDeVault } from './vault-path.js';
 const sha256Hex = (bytes) => toHex(cryptoProvider().sha256(bytes));
@@ -95,9 +95,7 @@ hashRemoto) {
             return { verdict: 'blocked', reason: 'un archivo local ocupa el camino' };
         return { verdict: 'safe' };
     }
-    const hashActual = actual?.isFile
-        ? hashDePath(revision.path, await port.read(revision.path))
-        : null;
+    const hashActual = actual?.isFile ? sha256Hex(await port.read(revision.path)) : null;
     if (revision.deleted) {
         if (!actual)
             return { verdict: 'already-gone' };
@@ -163,7 +161,7 @@ async function intentarFusionar(deps, revision, plaintextRemoto, hashRemoto, rea
         const dec = new TextDecoder('utf-8', { fatal: true });
         const textoBase = dec.decode(decryptBlob(keys, storedBase));
         const bytesOurs = await port.read(revision.path);
-        const oursHash = hashDePath(revision.path, bytesOurs);
+        const oursHash = sha256Hex(bytesOurs);
         const textoOurs = dec.decode(bytesOurs);
         const textoTheirs = dec.decode(plaintextRemoto);
         // appearance.json NO se mergea como texto: Obsidian lo reescribe con su orden de
@@ -203,7 +201,7 @@ async function publicarFusion(deps, intent, revision, fusion) {
     intent = {
         ...intent,
         tempName,
-        contentHash: hashDePath(revision.path, fusion.fusion),
+        contentHash: sha256Hex(fusion.fusion),
         state: 'verified',
         mergeBase: {
             rev: revision.rev,

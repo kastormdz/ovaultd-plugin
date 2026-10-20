@@ -21,12 +21,6 @@ export declare const esApariencia: (path: string) => boolean;
  */
 export declare function proyeccionDeApariencia(texto: string): string;
 /**
- * Hash de un archivo para el diff/apply. Para `appearance.json` es el hash de la
- * PROYECCIÓN: así el modo que Obsidian reescribe solo no se ve como una edición.
- * Para todo lo demás, el hash de los bytes.
- */
-export declare function hashDePath(path: string, bytes: Uint8Array): string;
-/**
  * Merge por campo: `{...local, ...portablesDelRemoto}`. Un campo portable solo se toma
  * del remoto si el remoto lo CAMBIÓ respecto de la base — así un cambio local del tema no
  * se pisa con el remoto viejo. El resto del archivo (modo, fuentes, claves que no
