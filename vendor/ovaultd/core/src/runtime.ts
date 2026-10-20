@@ -25,6 +25,7 @@ import { HttpFileSystemPort } from './file-port.js';
 import { contenidoDeRevision, diffDeTextos, historiaDeArchivo } from './history.js';
 import { prepareOutboxEntry, type EnqueueRequest } from './outbox.js';
 import { pushOnce } from './push.js';
+import { aplicarPrune, planificarPrune } from './prune.js';
 import { pullOnce } from './reconcile.js';
 import { diffLocal, escanearVault } from './scan.js';
 import { correrCiclo } from './SyncClient.js';
@@ -350,19 +351,42 @@ const handlers: Record<string, Handler> = {
     };
   },
 
-  'sync.pushOnce': async () => {
+  'sync.pushOnce': async (params: { rescan?: boolean } = {}) => {
     if (!syncConn || !syncVaultMeta) {
       throw new Error('sync: no hay conexión abierta (sync.open primero)');
     }
     const { store, keys } = exigirApply();
-    return pushOnce({
+    return pushOnce(
+      {
+        store,
+        port: new HttpFileSystemPort(globalThis.location.origin),
+        keys,
+        conn: syncConn,
+        vaultUuid: syncVaultMeta.vaultUuid,
+        epoch: syncVaultMeta.epoch,
+      },
+      { rescan: params.rescan === true },
+    );
+  },
+
+  /**
+   * Reconcilia los paths vivos del server contra el disco local. `aplicar: false`
+   * (default) solo devuelve el plan; con `aplicar: true` encola un `del` por cada
+   * huérfano (el push normal los publica: lote firmado con el expected_rev de
+   * siempre). El server no puede hacer esto: es ciego a los paths (E2EE).
+   */
+  'sync.pruneRemote': async (params: { aplicar?: boolean } = {}) => {
+    if (!syncConn) {
+      throw new Error('prune: no hay conexión abierta (sync.open primero)');
+    }
+    const { store, keys } = exigirApply();
+    const deps = {
       store,
-      port: new HttpFileSystemPort(globalThis.location.origin),
       keys,
       conn: syncConn,
-      vaultUuid: syncVaultMeta.vaultUuid,
-      epoch: syncVaultMeta.epoch,
-    });
+      port: new HttpFileSystemPort(globalThis.location.origin),
+    };
+    return params.aplicar ? aplicarPrune(deps) : planificarPrune(deps);
   },
 
   // -------------------------------------------------------------- history (corte 5b)

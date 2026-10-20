@@ -18,12 +18,13 @@
 import { cryptoProvider, decryptBlob } from '@ovaultd/crypto';
 import { toHex } from '@ovaultd/protocol';
 import { createIntent } from './apply.js';
+import { esApariencia, hashDePath, mergeDeApariencia } from './apariencia.js';
 import { esMergeablePorTipo, mergeDeTexto } from './merge.js';
 import { colisionDeCase, nombreBase, validarRutaDeVault } from './vault-path.js';
 const sha256Hex = (bytes) => toHex(cryptoProvider().sha256(bytes));
 /**
  * Ruta de la copia de conflicto, con el patrón de Obsidian Sync:
- * `Nota (conflicto juno 202610191545).md` — sello `YYYYMMDDHHMM` (12 dígitos) y nombre de
+ * `Nota (conflicto escritorio 202610191545).md` — sello `YYYYMMDDHHMM` (12 dígitos) y nombre de
  * dispositivo saneado. Sin extensión o en subcarpeta también funciona.
  */
 export function pathDeCopiaDeConflicto(ruta, dispositivo, cuando = new Date(), sufijo = 0) {
@@ -94,7 +95,9 @@ hashRemoto) {
             return { verdict: 'blocked', reason: 'un archivo local ocupa el camino' };
         return { verdict: 'safe' };
     }
-    const hashActual = actual?.isFile ? sha256Hex(await port.read(revision.path)) : null;
+    const hashActual = actual?.isFile
+        ? hashDePath(revision.path, await port.read(revision.path))
+        : null;
     if (revision.deleted) {
         if (!actual)
             return { verdict: 'already-gone' };
@@ -160,9 +163,19 @@ async function intentarFusionar(deps, revision, plaintextRemoto, hashRemoto, rea
         const dec = new TextDecoder('utf-8', { fatal: true });
         const textoBase = dec.decode(decryptBlob(keys, storedBase));
         const bytesOurs = await port.read(revision.path);
-        const oursHash = sha256Hex(bytesOurs);
+        const oursHash = hashDePath(revision.path, bytesOurs);
         const textoOurs = dec.decode(bytesOurs);
         const textoTheirs = dec.decode(plaintextRemoto);
+        // appearance.json NO se mergea como texto: Obsidian lo reescribe con su orden de
+        // claves y el diff por caracteres se solapa aunque los cambios sean disjuntos. Acá
+        // manda el merge POR CAMPO (tema/snippets del remoto; modo y fuentes locales).
+        if (esApariencia(revision.path)) {
+            return {
+                fusion: new TextEncoder().encode(mergeDeApariencia(textoBase, textoOurs, textoTheirs)),
+                oursHash,
+                hashRemoto,
+            };
+        }
         const resultado = mergeDeTexto(textoBase, textoOurs, textoTheirs);
         if (resultado.tipo === 'conflicto')
             return null;
@@ -190,7 +203,7 @@ async function publicarFusion(deps, intent, revision, fusion) {
     intent = {
         ...intent,
         tempName,
-        contentHash: sha256Hex(fusion.fusion),
+        contentHash: hashDePath(revision.path, fusion.fusion),
         state: 'verified',
         mergeBase: {
             rev: revision.rev,

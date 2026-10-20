@@ -72,7 +72,7 @@ export interface RecoveryReport {
 }
 /**
  * Ruta de la copia de conflicto, con el patrón de Obsidian Sync:
- * `Nota (conflicto juno 202610191545).md` — sello `YYYYMMDDHHMM` (12 dígitos) y nombre de
+ * `Nota (conflicto escritorio 202610191545).md` — sello `YYYYMMDDHHMM` (12 dígitos) y nombre de
  * dispositivo saneado. Sin extensión o en subcarpeta también funciona.
  */
 export declare function pathDeCopiaDeConflicto(ruta: string, dispositivo: string, cuando?: Date, sufijo?: number): string;

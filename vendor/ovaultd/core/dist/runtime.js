@@ -5802,6 +5802,51 @@
     };
   }
 
+  // src/apariencia.ts
+  var CAMPOS_PORTABLES = ["cssTheme", "enabledCssSnippets"];
+  var DECODIFICADOR = new TextDecoder();
+  var CODIFICADOR = new TextEncoder();
+  var esApariencia = (path) => /(^|\/)appearance\.json$/.test(path);
+  var parsear = (texto) => {
+    try {
+      const v = JSON.parse(texto);
+      return v !== null && typeof v === "object" && !Array.isArray(v) ? v : null;
+    } catch {
+      return null;
+    }
+  };
+  function proyeccionDeApariencia(texto) {
+    const o = parsear(texto) ?? {};
+    const p = {};
+    for (const campo of CAMPOS_PORTABLES) {
+      const v = o[campo];
+      if (campo === "enabledCssSnippets" && Array.isArray(v)) {
+        p[campo] = [...v].map(String).sort();
+      } else if (v !== void 0) {
+        p[campo] = v;
+      }
+    }
+    return JSON.stringify(p);
+  }
+  function hashDePath(path, bytes) {
+    const datos = esApariencia(path) ? CODIFICADOR.encode(proyeccionDeApariencia(DECODIFICADOR.decode(bytes))) : bytes;
+    return toHex(cryptoProvider().sha256(datos));
+  }
+  function mergeDeApariencia(base, local, remoto) {
+    const l = parsear(local);
+    const b = parsear(base);
+    const r = parsear(remoto);
+    if (l === null || b === null || r === null) return local;
+    const salida = { ...l };
+    for (const campo of CAMPOS_PORTABLES) {
+      if (JSON.stringify(r[campo]) !== JSON.stringify(b[campo])) {
+        salida[campo] = r[campo];
+      }
+    }
+    return `${JSON.stringify(salida, null, 2)}
+`;
+  }
+
   // src/merge.ts
   var import_diff_match_patch = __toESM(require_diff_match_patch(), 1);
   function cambiosDe(dmp, base, texto) {
@@ -5980,7 +6025,7 @@
       if (actual && actual.isFile) return { verdict: "blocked", reason: "un archivo local ocupa el camino" };
       return { verdict: "safe" };
     }
-    const hashActual = actual?.isFile ? sha256Hex(await port.read(revision.path)) : null;
+    const hashActual = actual?.isFile ? hashDePath(revision.path, await port.read(revision.path)) : null;
     if (revision.deleted) {
       if (!actual) return { verdict: "already-gone" };
       if (base?.contentHash && hashActual === base.contentHash) return { verdict: "safe" };
@@ -6011,9 +6056,16 @@
       const dec = new TextDecoder("utf-8", { fatal: true });
       const textoBase = dec.decode(decryptBlob(keys, storedBase));
       const bytesOurs = await port.read(revision.path);
-      const oursHash = sha256Hex(bytesOurs);
+      const oursHash = hashDePath(revision.path, bytesOurs);
       const textoOurs = dec.decode(bytesOurs);
       const textoTheirs = dec.decode(plaintextRemoto);
+      if (esApariencia(revision.path)) {
+        return {
+          fusion: new TextEncoder().encode(mergeDeApariencia(textoBase, textoOurs, textoTheirs)),
+          oursHash,
+          hashRemoto
+        };
+      }
       const resultado = mergeDeTexto(textoBase, textoOurs, textoTheirs);
       if (resultado.tipo === "conflicto") return null;
       return { fusion: new TextEncoder().encode(resultado.texto), oursHash, hashRemoto };
@@ -6029,7 +6081,7 @@
     intent = {
       ...intent,
       tempName,
-      contentHash: sha256Hex(fusion.fusion),
+      contentHash: hashDePath(revision.path, fusion.fusion),
       state: "verified",
       mergeBase: {
         rev: revision.rev,
@@ -6442,8 +6494,10 @@
   var CONFIG_PORTABLE = [
     /^snippets\/.+/,
     // CSS propio del vault
-    /^themes\/.+/
+    /^themes\/.+/,
     // temas instalados como archivos (contenido puro)
+    /^appearance\.json$/
+    // tema + snippets: merge POR CAMPO, no 3-vías de texto
   ];
   function esConfigPortable(dentroDelConfig) {
     return CONFIG_PORTABLE.some((patron) => patron.test(dentroDelConfig));
@@ -6544,7 +6598,7 @@
       salida.push({
         path: rel,
         pathId: toHex(pathId(keys, rel)),
-        contentHash: toHex(cryptoProvider().sha256(bytes)),
+        contentHash: hashDePath(rel, bytes),
         size: bytes.length,
         mtimeMs: stat.mtimeMs
       });
@@ -6834,10 +6888,10 @@
     }
     return fromHex(hex);
   };
-  async function encolarDiff(deps, head) {
+  async function encolarDiff(deps, head, rescan = false) {
     const { store: store2, port, keys } = deps;
     const cache = new Map(
-      (await store2.listIndex()).map((entrada) => [
+      (rescan ? [] : await store2.listIndex()).map((entrada) => [
         entrada.path ?? "",
         { mtime: entrada.mtime ?? null, size: entrada.size ?? null, contentHash: entrada.contentHash ?? null }
       ])
@@ -7038,12 +7092,12 @@
   function marcarFase(nombre, ms) {
     FASES[nombre] += ms;
   }
-  async function pushOnce(deps) {
+  async function pushOnce(deps, opciones = {}) {
     for (const clave of Object.keys(FASES)) FASES[clave] = 0;
     const t0Total = performance.now();
     const { store: store2 } = deps;
     let head = (await store2.readCheckpoint().catch(() => null))?.since ?? 0;
-    const { diff, encoladas, deletesBloqueados } = await encolarDiff(deps, head);
+    const { diff, encoladas, deletesBloqueados } = await encolarDiff(deps, head, opciones.rescan === true);
     let empujadas = 0;
     const tLista = performance.now();
     const pendientes = (await store2.listOutbox()).filter((entry) => entry.state !== "confirmed").sort((a, b) => a.queuedAt - b.queuedAt);
@@ -7119,11 +7173,84 @@
     return { diff, encoladas, empujadas, headRev: head, deletesBloqueados };
   }
 
-  // src/reconcile.ts
+  // src/prune.ts
   var CERO_32 = "00".repeat(32);
-  var sinBlob = (blobIdB64) => {
+  var esCarpeta = (blobIdB64) => {
     try {
       return toHex(b64Decode(blobIdB64)) === CERO_32;
+    } catch {
+      return false;
+    }
+  };
+  async function estadoVivoDelServer(conn) {
+    const vivos = /* @__PURE__ */ new Map();
+    let cursor = 0;
+    for (; ; ) {
+      const pagina = await conn.pull(cursor, 500);
+      for (const item of pagina.items) {
+        if (item.op === "del") {
+          vivos.delete(item.path_id);
+          continue;
+        }
+        if (esCarpeta(item.blob_id)) continue;
+        vivos.set(item.path_id, { blobId: item.blob_id, pathEnc: item.path_enc });
+      }
+      const siguiente = pagina.next_since;
+      if (siguiente <= cursor) break;
+      cursor = siguiente;
+    }
+    return vivos;
+  }
+  async function planificarPrune(deps) {
+    const vivos = await estadoVivoDelServer(deps.conn);
+    const plan = {
+      vivos: vivos.size,
+      enDisco: 0,
+      huerfanos: [],
+      ilegibles: 0,
+      bloqueadas: 0
+    };
+    for (const [pathIdB64, entrada] of vivos) {
+      let ruta;
+      try {
+        ruta = decryptPathEnc(deps.keys, b64Decode(entrada.pathEnc), b64Decode(pathIdB64));
+      } catch {
+        plan.ilegibles += 1;
+        continue;
+      }
+      if (!validarRutaDeVault(ruta).ok) {
+        plan.bloqueadas += 1;
+        continue;
+      }
+      const stat = await deps.port.stat(ruta);
+      if (stat === null) plan.huerfanos.push(ruta);
+      else plan.enDisco += 1;
+    }
+    plan.huerfanos.sort();
+    return plan;
+  }
+  async function aplicarPrune(deps) {
+    const plan = await planificarPrune(deps);
+    if (plan.huerfanos.length === 0) return { ...plan, encolados: 0 };
+    const checkpoint = await deps.store.readCheckpoint().catch(() => null);
+    const expectedRev = checkpoint?.since ?? 0;
+    const entradas = plan.huerfanos.map(
+      (ruta) => prepareOutboxEntry({
+        kind: "del",
+        path: ruta,
+        pathId: toHex(pathId(deps.keys, ruta)),
+        expectedRev
+      })
+    );
+    await deps.store.putOutboxMany(entradas);
+    return { ...plan, encolados: entradas.length };
+  }
+
+  // src/reconcile.ts
+  var CERO_322 = "00".repeat(32);
+  var sinBlob = (blobIdB64) => {
+    try {
+      return toHex(b64Decode(blobIdB64)) === CERO_322;
     } catch {
       return false;
     }
@@ -7921,19 +8048,41 @@
         }))
       };
     },
-    "sync.pushOnce": async () => {
+    "sync.pushOnce": async (params = {}) => {
       if (!syncConn || !syncVaultMeta) {
         throw new Error("sync: no hay conexi\xF3n abierta (sync.open primero)");
       }
       const { store: store2, keys } = exigirApply();
-      return pushOnce({
+      return pushOnce(
+        {
+          store: store2,
+          port: new HttpFileSystemPort(globalThis.location.origin),
+          keys,
+          conn: syncConn,
+          vaultUuid: syncVaultMeta.vaultUuid,
+          epoch: syncVaultMeta.epoch
+        },
+        { rescan: params.rescan === true }
+      );
+    },
+    /**
+     * Reconcilia los paths vivos del server contra el disco local. `aplicar: false`
+     * (default) solo devuelve el plan; con `aplicar: true` encola un `del` por cada
+     * huérfano (el push normal los publica: lote firmado con el expected_rev de
+     * siempre). El server no puede hacer esto: es ciego a los paths (E2EE).
+     */
+    "sync.pruneRemote": async (params = {}) => {
+      if (!syncConn) {
+        throw new Error("prune: no hay conexi\xF3n abierta (sync.open primero)");
+      }
+      const { store: store2, keys } = exigirApply();
+      const deps = {
         store: store2,
-        port: new HttpFileSystemPort(globalThis.location.origin),
         keys,
         conn: syncConn,
-        vaultUuid: syncVaultMeta.vaultUuid,
-        epoch: syncVaultMeta.epoch
-      });
+        port: new HttpFileSystemPort(globalThis.location.origin)
+      };
+      return params.aplicar ? aplicarPrune(deps) : planificarPrune(deps);
     },
     // -------------------------------------------------------------- history (corte 5b)
     /**

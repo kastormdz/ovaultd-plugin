@@ -51,11 +51,14 @@ const operacionBytes = (operationId) => {
  * Encola el diff en la outbox (save-first: el snapshot queda persistido y verificado
  * antes de cualquier publicación).
  */
-async function encolarDiff(deps, head) {
+async function encolarDiff(deps, head, 
+/** Ignora el cache del escaneo: lee y hashea TODO el vault (remedio y diagnóstico). */
+rescan = false) {
     const { store, port, keys } = deps;
     // Cache del escaneo incremental: el índice guarda mtime+size+hash de lo último visto
     // (el push lo escribe al confirmar); si nada cambió, el scan no lee el contenido.
-    const cache = new Map((await store.listIndex()).map((entrada) => [
+    // Con `rescan` el cache va vacío: cada archivo se lee y se hashea de nuevo.
+    const cache = new Map((rescan ? [] : await store.listIndex()).map((entrada) => [
         entrada.path ?? '',
         { mtime: entrada.mtime ?? null, size: entrada.size ?? null, contentHash: entrada.contentHash ?? null },
     ]));
@@ -270,13 +273,13 @@ const FASES = {
 function marcarFase(nombre, ms) {
     FASES[nombre] += ms;
 }
-export async function pushOnce(deps) {
+export async function pushOnce(deps, opciones = {}) {
     for (const clave of Object.keys(FASES))
         FASES[clave] = 0;
     const t0Total = performance.now();
     const { store } = deps;
     let head = (await store.readCheckpoint().catch(() => null))?.since ?? 0;
-    const { diff, encoladas, deletesBloqueados } = await encolarDiff(deps, head);
+    const { diff, encoladas, deletesBloqueados } = await encolarDiff(deps, head, opciones.rescan === true);
     let empujadas = 0;
     const tLista = performance.now();
     const pendientes = (await store.listOutbox())

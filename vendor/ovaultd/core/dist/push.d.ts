@@ -49,5 +49,7 @@ export interface PushReport {
         mensaje: string;
     };
 }
-export declare function pushOnce(deps: PushDeps): Promise<PushReport>;
+export declare function pushOnce(deps: PushDeps, opciones?: {
+    rescan?: boolean;
+}): Promise<PushReport>;
 //# sourceMappingURL=push.d.ts.map
