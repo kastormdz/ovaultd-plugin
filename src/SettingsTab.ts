@@ -33,7 +33,9 @@ export interface AjustesDeOvaultd {
 export const AJUSTES_POR_DEFECTO: AjustesDeOvaultd = {
   serverUrl: '',
   email: '',
-  vaultNumero: '',
+  // El primer vault de una cuenta es el #1: es el default razonable y evita que
+  // la UI muestre el campo vacío cuando hay un solo vínculo.
+  vaultNumero: '1',
   modo: 'normal',
 };
 
