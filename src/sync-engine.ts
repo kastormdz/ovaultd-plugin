@@ -530,6 +530,33 @@ export class MotorDeSync {
   }
 
   /**
+   * Resuelve TODOS los conflictos bloqueados con la misma elección ("en lote").
+   *
+   * Un fallo en uno NO frena el resto: cada conflicto es independiente y lo peor
+   * que puede pasar es que quede bloqueado (no se pierde nada). Se devuelve el
+   * detalle de los fallidos para que la UI lo muestre.
+   */
+  async resolverTodos(
+    eleccion: EleccionDeResolucion,
+  ): Promise<{ resueltos: number; fallidos: Array<{ path?: string; error: string }> }> {
+    const pendientes = await this.conflictosPendientes();
+    const fallidos: Array<{ path?: string; error: string }> = [];
+    let resueltos = 0;
+    for (const intent of pendientes) {
+      try {
+        await this.resolver(intent.intentId, eleccion);
+        resueltos += 1;
+      } catch (error) {
+        fallidos.push({
+          path: intent.path,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    return { resueltos, fallidos };
+  }
+
+  /**
    * Resuelve un conflicto bloqueado con la elección del usuario y agenda un ciclo: el
    * pull retoma desde el checkpoint y todo lo que estaba encolado fluye.
    */
