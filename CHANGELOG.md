@@ -6,6 +6,17 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 (mismo `MAJOR.MINOR` = pareja probada junta; ver ADR-0018 y la sección «Compatibility» del
 README).
 
+## [0.3.0] — 2026-10-24
+
+Va con el server 0.3.0 (release train: mismo MAJOR.MINOR). El wire no cambió; el server
+ahora manda **un `notify` por lote** en vez de uno por operación (el aviso es una señal:
+el plugin hace pull con su `since`).
+
+### Fixed
+
+- Convive con el server 0.3.0: `min_plugin_version` pasó a 0.3.0, así que un plugin 0.2.x
+  contra este server muestra el aviso de compatibilidad en vez de sincronizar a medias.
+
 ## [0.2.38] — 2026-10-24
 
 ### Fixed
