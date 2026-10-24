@@ -6131,7 +6131,8 @@
     let verdict = guard.verdict;
     let copiaDeConflicto = null;
     if (guard.verdict === "blocked") {
-      if (opciones.forzar !== true) {
+      const estructural = guard.reason === "un archivo local ocupa el camino" || guard.reason === "un directorio local ocupa el camino";
+      if (opciones.forzar !== true || estructural) {
         const fusion = await intentarFusionar(deps, revision, plaintext, hashVerificado, guard.reason);
         if (fusion !== null) {
           return publicarFusion(deps, intent, revision, fusion);
@@ -7150,7 +7151,7 @@
     const { diff, encoladas, deletesBloqueados } = await encolarDiff(deps, head, opciones.rescan === true, opciones.configDir ?? ".obsidian");
     let empujadas = 0;
     const tLista = performance.now();
-    const pendientes = (await store2.listOutbox()).filter((entry) => entry.state === "pending" || entry.state === "sent").sort((a, b) => a.queuedAt - b.queuedAt);
+    const pendientes = (await store2.listOutbox()).filter((entry) => entry.state === "pending" || entry.state === "sent").sort((a, b) => a.expectedRev - b.expectedRev || a.queuedAt - b.queuedAt);
     marcarFase("listOutbox", performance.now() - tLista);
     const subir = async (lote) => {
       const operationIdDelLote = lote[0].operationId;
@@ -7306,6 +7307,21 @@
     );
     await deps.store.putOutboxMany(entradas);
     return { ...plan, encolados: entradas.length };
+  }
+
+  // src/prune-guard.ts
+  function guardaDePrune(plan, permitirVacio) {
+    if (permitirVacio) return null;
+    if (plan.vivos > 0 && plan.enDisco === 0) {
+      return `el disco local no tiene archivos y el server tiene ${plan.vivos}: aplicar este plan borrar\xEDa TODO el vault del server. Abortado.
+  \xBFVault mal montado o carpeta equivocada? Si es intencional: --permitir-vacio`;
+    }
+    if (plan.vivos > 0 && plan.huerfanos.length > plan.vivos * 0.5) {
+      const porcentaje = Math.round(plan.huerfanos.length / plan.vivos * 100);
+      return `el plan borrar\xEDa ${plan.huerfanos.length} de ${plan.vivos} paths (${porcentaje} %): m\xE1s de la mitad del server. Abortado.
+  Revis\xE1 que el vault est\xE9 completo antes de aplicar. Si es intencional: --permitir-vacio`;
+    }
+    return null;
   }
 
   // src/reconcile.ts
@@ -8207,7 +8223,11 @@
         conn: syncConn,
         port: new HttpFileSystemPort(globalThis.location.origin)
       };
-      return params.aplicar ? aplicarPrune(deps) : planificarPrune(deps);
+      if (!params.aplicar) return planificarPrune(deps);
+      const plan = await planificarPrune(deps);
+      const aborto = guardaDePrune(plan, params.permitirVacio === true);
+      if (aborto !== null) return { abortado: aborto, ...plan };
+      return aplicarPrune(deps);
     },
     // -------------------------------------------------------------- history (corte 5b)
     /**

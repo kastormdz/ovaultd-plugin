@@ -297,8 +297,30 @@ export class MotorDeSync {
   }
 
   async salir(): Promise<void> {
+    // Cortar el motor PRIMERO: si el WS sigue vivo, el ciclo reabre la conexión y la
+    // sesión "revive" después de salir.
+    await this.detener().catch(() => undefined);
+    this.conn?.close();
+    this.conn = null;
+    this.store?.close();
+    this.store = null;
+    this.keys = null;
+    this.port = null;
+    this.vaultUuidBytes = null;
     this.sesion = null;
+    this.estadoLocal = null;
+
     await this.app.vault.adapter.remove(this.rutaSesion).catch(() => undefined);
+
+    // El token del DEVICE vive en estado-local.json. Sin borrarlo, el próximo arranque
+    // encuentra credenciales y vuelve a conectar: "salir" no salía.
+    const local = await this.leerEstadoLocal().catch(() => null);
+    if (local !== null && local.cuenta.token !== '') {
+      local.cuenta = { ...local.cuenta, token: '' };
+      await this.guardarEstadoLocal(local).catch(() => undefined);
+    }
+
+    this.fijarEstado('apagado', 'sin vincular');
   }
 
   /** Los vaults de la cuenta (con la sesión): lista para vincular/crear/borrar. */
@@ -561,6 +583,12 @@ export class MotorDeSync {
    * Resuelve un conflicto bloqueado con la elección del usuario y agenda un ciclo: el
    * pull retoma desde el checkpoint y todo lo que estaba encolado fluye.
    */
+  /**
+   * El resolver toca el MISMO journal que el ciclo: se serializan. Si hay un ciclo en curso
+   * se espera a que termine (máx 10 s) y mientras resuelve no arranca uno nuevo.
+   */
+  private resolviendo = false;
+
   async resolver(intentId: string, eleccion: EleccionDeResolucion): Promise<void> {
     const { store, port, keys } = this;
     if (store === null || port === null || keys === null) {
@@ -570,15 +598,26 @@ export class MotorDeSync {
     const intent = await store.getIntent(intentId);
     if (intent === null) throw new Error('ese conflicto ya no existe');
 
-    // Con el ciclo en marcha se usa su conexión; si todavía no abrió (recién arrancado,
-    // como en el pedido E2E) se abre una al vuelo — el resolver solo baja el blob.
-    const conn = this.conn ?? (await this.conexionAlVuelo());
-    if (conn === null) throw new Error('no hay sesión guardada (¿vinculaste el vault?)');
+    // Esperar al ciclo en curso: escribir el archivo mientras el pull lo está publicando
+    // deja el journal y el disco contando cosas distintas.
+    for (let espera = 0; espera < 200 && this.corriendo; espera += 1) {
+      await new Promise((listo) => ventana.setTimeout(listo, 50));
+    }
 
+    this.resolviendo = true;
     try {
-      await resolverBloqueado({ store, port, keys }, intent, eleccion, conn);
+      // Con el ciclo en marcha se usa su conexión; si todavía no abrió (recién arrancado,
+      // como en el pedido E2E) se abre una al vuelo — el resolver solo baja el blob.
+      const conn = this.conn ?? (await this.conexionAlVuelo());
+      if (conn === null) throw new Error('no hay sesión guardada (¿vinculaste el vault?)');
+
+      try {
+        await resolverBloqueado({ store, port, keys }, intent, eleccion, conn);
+      } finally {
+        if (conn !== this.conn) conn.close();
+      }
     } finally {
-      if (conn !== this.conn) conn.close();
+      this.resolviendo = false;
     }
     this.marcarSucio(250);
   }
@@ -742,9 +781,23 @@ export class MotorDeSync {
 
   // ------------------------------------------------------------------ ciclo de vida
 
+  /** Arranque en vuelo: dos `iniciar()` concurrentes comparten la MISMA promesa. */
+  private arranque: Promise<void> | null = null;
+
   async iniciar(): Promise<void> {
-    if (this.iniciando) return;
-    this.iniciando = true;
+    // Antes, la segunda llamada volvía `undefined` en el acto y el llamador seguía como si
+    // el motor estuviera listo: "vinculado pero muerto". Ahora espera el arranque real.
+    if (this.arranque !== null) return this.arranque;
+    const enVuelo = this.arrancarMotor();
+    this.arranque = enVuelo;
+    try {
+      await enVuelo;
+    } finally {
+      if (this.arranque === enVuelo) this.arranque = null;
+    }
+  }
+
+  private async arrancarMotor(): Promise<void> {
     this.detenido = false;
     try {
       const local = this.estadoLocal ?? (await this.leerEstadoLocal());
@@ -804,8 +857,6 @@ export class MotorDeSync {
       // solo; cuando la red o el server vuelven, el motor revive sin intervención.
       this.programarReintentoDeArranque();
       throw error;
-    } finally {
-      this.iniciando = false;
     }
   }
 
@@ -917,8 +968,8 @@ export class MotorDeSync {
     if (this.store === null || this.keys === null || this.port === null) {
       return null;
     }
-    if (this.corriendo) {
-      this.sucio = true; // ya hay un ciclo: que repita al terminar
+    if (this.corriendo || this.resolviendo) {
+      this.sucio = true; // ya hay un ciclo (o una resolución): que repita al terminar
       return null;
     }
 

@@ -6,6 +6,17 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 (mismo `MAJOR.MINOR` = pareja probada junta; ver ADR-0018 y la sección «Compatibility» del
 README).
 
+## [0.2.37] — 2026-10-24
+
+### Fixed
+
+- **"Salir" sale de verdad.** Cierra el WS, limpia el índice y **borra el token del device**
+  del estado local: antes la sesión revivía en el próximo arranque.
+- **`iniciar()` es esperable.** Dos arranques concurrentes comparten la misma promesa; antes
+  el segundo volvía en el acto y quedaba "vinculado pero muerto".
+- **Resolver y ciclo se serializan**: el resolver espera al ciclo en curso y no deja que
+  arranque uno nuevo mientras escribe el archivo.
+
 ## [0.2.36] — 2026-10-24
 
 ### Fixed
