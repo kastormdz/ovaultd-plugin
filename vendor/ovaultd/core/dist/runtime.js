@@ -6286,6 +6286,31 @@
         reporte.cleaned += 1;
         continue;
       }
+      if (intent.kind === "folder") {
+        if (!intent.path) {
+          await store2.putIntent({ ...intent, state: "blocked", reason: "carpeta sin path" });
+          reporte.blocked += 1;
+          continue;
+        }
+        const ocupante = await port.stat(intent.path).catch(() => null);
+        if (ocupante?.isFile) {
+          const copia = await conservarLocalComoCopia(deps, intent.path);
+          if (copia === null) {
+            await store2.putIntent({
+              ...intent,
+              state: "blocked",
+              reason: "carpeta: no se pudo conservar el archivo que ocupa el camino"
+            });
+            reporte.blocked += 1;
+            continue;
+          }
+          await port.unlink(intent.path).catch(() => void 0);
+        }
+        await port.mkdirp(intent.path);
+        await commitDesdeIntento(deps, intent);
+        reporte.completed += 1;
+        continue;
+      }
       if (!intent.tempName || !intent.path || !intent.contentHash) {
         await store2.putIntent({ ...intent, state: "blocked", reason: "intenci\xF3n verificada incompleta" });
         reporte.blocked += 1;
@@ -6310,6 +6335,21 @@
         const base = await store2.getBase(intent.pathId);
         const destinoOk = intent.mergeBase ? hashDestino === intent.mergeBase.oursHash : hashDestino === null ? base === null : base?.contentHash != null && hashDestino === base.contentHash;
         if (!destinoOk) {
+          if (destino === null) {
+            await port.rename(intent.tempName, intent.path);
+            await commitDesdeIntento(deps, intent);
+            reporte.completed += 1;
+            continue;
+          }
+          if ((deps.politicaDeConflictos ?? "conservar") === "conservar") {
+            const copia = await conservarLocalComoCopia(deps, intent.path);
+            if (copia !== null) {
+              await port.rename(intent.tempName, intent.path);
+              await commitDesdeIntento(deps, intent);
+              reporte.completed += 1;
+              continue;
+            }
+          }
           await store2.putIntent({ ...intent, state: "blocked", reason: "destino con cambios locales: no se pisa" });
           reporte.blocked += 1;
           continue;

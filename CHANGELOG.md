@@ -6,6 +6,13 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 (mismo `MAJOR.MINOR` = pareja probada junta; ver ADR-0018 y la sección «Compatibility» del
 README).
 
+## [0.2.38] — 2026-10-24
+
+### Fixed
+
+- **La recuperación tras un cierre abrupto respeta tu copia**: ya no pisa un archivo editado
+  después del crash (lo conserva como copia) y completa las carpetas a medio crear.
+
 ## [0.2.37] — 2026-10-24
 
 ### Fixed
