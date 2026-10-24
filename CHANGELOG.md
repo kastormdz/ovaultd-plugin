@@ -6,6 +6,21 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 (mismo `MAJOR.MINOR` = pareja probada junta; ver ADR-0018 y la sección «Compatibility» del
 README).
 
+## [0.2.35] — 2026-10-24
+
+### Added
+
+- **El panel muestra la versión del plugin.** El `hello` del sync reporta
+  `plugin x.y.z` y la tabla de dispositivos del panel la muestra por device.
+- **`configDir` real**: con un config dir custom se excluye ESE (no un `.obsidian`
+  fijo), así no se sube la config del vault con los tokens de los plugins.
+
+### Fixed
+
+- **El pull ya no te cambia el tema.** `appearance.json` se mezcla por campo: los
+  portables (tema CSS, snippets, tamaño de fuente) vienen del server y el modo
+  claro/oscuro y las fuentes quedan del dispositivo.
+
 ## [0.2.34] — 2026-10-24
 
 ### Fixed

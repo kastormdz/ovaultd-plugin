@@ -46,6 +46,8 @@ export interface SyncConnectionOptions {
      * una URL propia — sin esto paga un OPTIONS de ~40 ms POR blob.
      */
     fetchImpl?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+    /** Versión del cliente que reporta el `hello` (el panel la muestra por device). */
+    appVersion?: string;
 }
 export declare class SyncConnection {
     private readonly opciones;

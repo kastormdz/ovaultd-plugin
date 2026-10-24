@@ -71,7 +71,9 @@ const operacionBytes = (operationId) => {
  */
 async function encolarDiff(deps, head, 
 /** Ignora el cache del escaneo: lee y hashea TODO el vault (remedio y diagnóstico). */
-rescan = false) {
+rescan = false, 
+/** Config dir del vault: el escaneo excluye ESE, no `.obsidian` fijo. */
+configDir = '.obsidian') {
     const { store, port, keys } = deps;
     // Cache del escaneo incremental: el índice guarda mtime+size+hash de lo último visto
     // (el push lo escribe al confirmar); si nada cambió, el scan no lee el contenido.
@@ -83,10 +85,10 @@ rescan = false) {
     const contenidos = new Map();
     const tScan = performance.now();
     const ilegibles = new Map();
-    const entradas = await escanearVault(port, keys, '', cache, contenidos, ilegibles);
+    const entradas = await escanearVault(port, keys, '', cache, contenidos, ilegibles, configDir);
     marcarFase('scan', performance.now() - tScan);
     const tDiff = performance.now();
-    const diffBase = await diffLocal(store, entradas, ilegibles);
+    const diffBase = await diffLocal(store, entradas, ilegibles, configDir);
     marcarFase('diff', performance.now() - tDiff);
     // Un cliente VACÍO no borra el remoto (aceptación de fase 3): sin un solo archivo en
     // disco, los deletes del diff no son una intención — se bloquean y se informan.
@@ -303,7 +305,7 @@ export async function pushOnce(deps, opciones = {}) {
     const t0Total = performance.now();
     const { store } = deps;
     let head = (await store.readCheckpoint().catch(() => null))?.since ?? 0;
-    const { diff, encoladas, deletesBloqueados } = await encolarDiff(deps, head, opciones.rescan === true);
+    const { diff, encoladas, deletesBloqueados } = await encolarDiff(deps, head, opciones.rescan === true, opciones.configDir ?? '.obsidian');
     let empujadas = 0;
     const tLista = performance.now();
     const pendientes = (await store.listOutbox())

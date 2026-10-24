@@ -72,5 +72,6 @@ operationId: Uint8Array): Promise<{
 }>;
 export declare function pushOnce(deps: PushDeps, opciones?: {
     rescan?: boolean;
+    configDir?: string;
 }): Promise<PushReport>;
 //# sourceMappingURL=push.d.ts.map

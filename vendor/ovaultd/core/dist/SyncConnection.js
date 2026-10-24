@@ -88,6 +88,7 @@ export class SyncConnection {
             vault: this.opciones.vault,
             device: this.opciones.device,
             since,
+            ...(this.opciones.appVersion ? { app_version: this.opciones.appVersion } : {}),
         });
         const helloOk = (await this.esperar(['hello_ok']));
         const challenge = b64Decode(helloOk.challenge);

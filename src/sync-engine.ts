@@ -516,6 +516,7 @@ export class MotorDeSync {
       vault: local.vault.numero,
       device: local.cuenta.deviceId,
       keys: subclavesDeHex(local.vault.subclaves),
+      appVersion: `plugin ${this.versionPropia}`,
     });
     await conn.open({ since: 0 });
     return conn;
@@ -901,6 +902,7 @@ export class MotorDeSync {
       vault: local.vault.numero,
       device: local.cuenta.deviceId,
       keys: this.keys,
+      appVersion: `plugin ${this.versionPropia}`,
       // El aviso del server: hay revisiones nuevas. Es una señal, así que lo único que hace es
       // adelantar el ciclo — el pull con el `since` del checkpoint es el que trae los datos.
       alRecibirAviso: () => this.marcarSucio(AVISO_MS),
@@ -937,6 +939,9 @@ export class MotorDeSync {
           modo: this.modoDeSync,
           // Sello de las copias de conflicto: el mismo nombre que ve el panel de devices.
           deviceName: identidadDelDispositivo().name,
+          // Con un config dir custom, excluir ESE (no un `.obsidian` fijo): si no, se
+          // subiría la config entera del vault, tokens de plugins incluidos.
+          configDir: this.app.vault.configDir,
         });
       } while (this.sucio);
 

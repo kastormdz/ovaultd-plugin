@@ -51,9 +51,13 @@ export declare function escanearVault(port: FileSystemPort, keys: SubKeys, dir?:
 contenidos?: Map<string, Uint8Array>, 
 /** Salida: `pathId` hex -> path de los archivos que no se pudieron stat/leer. Un fallo
  *  de lectura (EACCES, EIO, ELOOP) NO es un borrado: el diff los excluye. */
-ilegibles?: Map<string, string>): Promise<EntradaEscaneada[]>;
+ilegibles?: Map<string, string>, 
+/** Config dir del vault (`.obsidian` o el custom): de ahí sale lo que se excluye. */
+configDir?: string): Promise<EntradaEscaneada[]>;
 /** Diff contra la base: qué falta empujar, con la outbox pendiente como filtro. */
-export declare function diffLocal(store: StateStore, entradas: EntradaEscaneada[], ilegibles?: Map<string, string>): Promise<DiffLocal>;
+export declare function diffLocal(store: StateStore, entradas: EntradaEscaneada[], ilegibles?: Map<string, string>, 
+/** Config dir del vault: las entradas del índice que viven ahí no cuentan como borrado. */
+configDir?: string): Promise<DiffLocal>;
 /** Resumen humano del diff (lo usan `list-local` y los reportes de sync). */
 export declare const resumirDiff: (diff: DiffLocal) => string;
 //# sourceMappingURL=scan.d.ts.map

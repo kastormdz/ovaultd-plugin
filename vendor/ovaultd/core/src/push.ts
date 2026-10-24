@@ -135,6 +135,8 @@ async function encolarDiff(
   head: number,
   /** Ignora el cache del escaneo: lee y hashea TODO el vault (remedio y diagnóstico). */
   rescan = false,
+  /** Config dir del vault: el escaneo excluye ESE, no `.obsidian` fijo. */
+  configDir = '.obsidian',
 ): Promise<{ diff: PushReport['diff']; encoladas: number; deletesBloqueados: number }> {
   const { store, port, keys } = deps;
   // Cache del escaneo incremental: el índice guarda mtime+size+hash de lo último visto
@@ -149,10 +151,10 @@ async function encolarDiff(
   const contenidos = new Map<string, Uint8Array>();
   const tScan = performance.now();
   const ilegibles = new Map<string, string>();
-  const entradas = await escanearVault(port, keys, '', cache, contenidos, ilegibles);
+  const entradas = await escanearVault(port, keys, '', cache, contenidos, ilegibles, configDir);
   marcarFase('scan', performance.now() - tScan);
   const tDiff = performance.now();
-  const diffBase = await diffLocal(store, entradas, ilegibles);
+  const diffBase = await diffLocal(store, entradas, ilegibles, configDir);
   marcarFase('diff', performance.now() - tDiff);
 
   // Un cliente VACÍO no borra el remoto (aceptación de fase 3): sin un solo archivo en
@@ -409,13 +411,16 @@ function marcarFase(nombre: keyof typeof FASES, ms: number): void {
   FASES[nombre] += ms;
 }
 
-export async function pushOnce(deps: PushDeps, opciones: { rescan?: boolean } = {}): Promise<PushReport> {
+export async function pushOnce(
+  deps: PushDeps,
+  opciones: { rescan?: boolean; configDir?: string } = {},
+): Promise<PushReport> {
   for (const clave of Object.keys(FASES) as Array<keyof typeof FASES>) FASES[clave] = 0;
   const t0Total = performance.now();
   const { store } = deps;
   let head = (await store.readCheckpoint().catch(() => null))?.since ?? 0;
 
-  const { diff, encoladas, deletesBloqueados } = await encolarDiff(deps, head, opciones.rescan === true);
+  const { diff, encoladas, deletesBloqueados } = await encolarDiff(deps, head, opciones.rescan === true, opciones.configDir ?? '.obsidian');
   let empujadas = 0;
 
   const tLista = performance.now();

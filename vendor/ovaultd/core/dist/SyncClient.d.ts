@@ -43,6 +43,8 @@ export interface SyncCycleDeps {
      * pull deja el estado local al día y lo que no vino del server se queda acá.
      */
     modo?: ModoDeSync;
+    /** Config dir del vault (default `.obsidian`): el escaneo excluye ESE, no un nombre fijo. */
+    configDir?: string;
     /** Nombre del dispositivo, para el sello de las copias de conflicto del pull. */
     deviceName?: string;
 }

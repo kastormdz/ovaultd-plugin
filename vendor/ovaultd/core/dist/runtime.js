@@ -6161,6 +6161,8 @@
       } catch {
       }
     }
+    let contenido = plaintext;
+    let hashContenido = hashVerificado;
     if (revision.kind === "file") {
       if (revision.deleted) {
         if (verdict !== "already-gone") await port.unlink(revision.path);
@@ -6170,8 +6172,20 @@
         }
         const dir = dirVault(revision.path);
         if (dir !== ".") await port.mkdirp(dir);
-        const { tempName } = await port.writeTemp(dir, plaintext);
-        intent = { ...intent, tempName, contentHash: hashVerificado, state: "verified" };
+        if (esApariencia(revision.path)) {
+          const local = await port.read(revision.path).catch(() => null);
+          if (local !== null) {
+            const textoLocal = new TextDecoder().decode(local);
+            const textoRemoto = new TextDecoder().decode(plaintext);
+            const fusion = mergeDeApariencia(textoLocal, textoLocal, textoRemoto);
+            if (fusion !== textoRemoto) {
+              contenido = new TextEncoder().encode(fusion);
+              hashContenido = sha256Hex(contenido);
+            }
+          }
+        }
+        const { tempName } = await port.writeTemp(dir, contenido);
+        intent = { ...intent, tempName, contentHash: hashContenido, state: "verified" };
         await store2.putIntent(intent);
         await port.rename(tempName, revision.path);
       }
@@ -6184,7 +6198,7 @@
         pathId: revision.pathId,
         rev: revision.rev,
         blobId: revision.blobId,
-        contentHash: revision.deleted ? null : revision.contentHash ?? hashVerificado
+        contentHash: revision.deleted ? null : hashContenido
       },
       index: {
         pathId: revision.pathId,
@@ -6193,8 +6207,8 @@
         deleted: revision.deleted,
         rev: revision.rev,
         blobId: revision.blobId,
-        contentHash: revision.deleted ? null : revision.contentHash ?? hashVerificado,
-        size: plaintext ? plaintext.length : null,
+        contentHash: revision.deleted ? null : hashContenido,
+        size: revision.deleted ? null : plaintext ? contenido.length : null,
         mtime: null
       }
       // Sin `checkpoint`: una revisión del server trae N operaciones y el cursor sólo puede
@@ -6529,13 +6543,13 @@
   var estaExcluido = (path, configDir = ".obsidian") => motivoDeExclusion(path, configDir) !== null;
 
   // src/scan.ts
-  async function escanearVault(port, keys, dir = "", cache, contenidos, ilegibles) {
+  async function escanearVault(port, keys, dir = "", cache, contenidos, ilegibles, configDir = ".obsidian") {
     const archivos = [];
     const recorrer = async (relDir) => {
       const listado = await port.list(relDir === "" ? "." : relDir);
       for (const entrada of listado) {
         const rel = relDir === "" ? entrada.name : `${relDir}/${entrada.name}`;
-        if (estaExcluido(rel)) continue;
+        if (estaExcluido(rel, configDir)) continue;
         if (entrada.isDirectory) {
           await recorrer(rel);
           continue;
@@ -6606,7 +6620,7 @@
     salida.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
     return salida;
   }
-  async function diffLocal(store2, entradas, ilegibles) {
+  async function diffLocal(store2, entradas, ilegibles, configDir = ".obsidian") {
     const base = new Map((await store2.listBase()).map((entrada) => [entrada.pathId, entrada]));
     const index = new Map((await store2.listIndex()).map((entrada) => [entrada.pathId, entrada]));
     const pendientes = new Set(
@@ -6647,7 +6661,7 @@
       if (ilegibles?.has(pathIdHex)) continue;
       const indexEntry = index.get(pathIdHex);
       if (indexEntry?.deleted === true) continue;
-      if (indexEntry?.path && estaExcluido(indexEntry.path)) continue;
+      if (indexEntry?.path && estaExcluido(indexEntry.path, configDir)) continue;
       if (pendientes.has(pathIdHex)) {
         diff.yaEncolados += 1;
         continue;
@@ -6731,7 +6745,8 @@
         proto: 1,
         vault: this.opciones.vault,
         device: this.opciones.device,
-        since
+        since,
+        ...this.opciones.appVersion ? { app_version: this.opciones.appVersion } : {}
       });
       const helloOk = await this.esperar(["hello_ok"]);
       const challenge = b64Decode(helloOk.challenge);
@@ -6909,7 +6924,7 @@
     }
     return fromHex(hex);
   };
-  async function encolarDiff(deps, head, rescan = false) {
+  async function encolarDiff(deps, head, rescan = false, configDir = ".obsidian") {
     const { store: store2, port, keys } = deps;
     const cache = new Map(
       (rescan ? [] : await store2.listIndex()).map((entrada) => [
@@ -6920,10 +6935,10 @@
     const contenidos = /* @__PURE__ */ new Map();
     const tScan = performance.now();
     const ilegibles = /* @__PURE__ */ new Map();
-    const entradas = await escanearVault(port, keys, "", cache, contenidos, ilegibles);
+    const entradas = await escanearVault(port, keys, "", cache, contenidos, ilegibles, configDir);
     marcarFase("scan", performance.now() - tScan);
     const tDiff = performance.now();
-    const diffBase = await diffLocal(store2, entradas, ilegibles);
+    const diffBase = await diffLocal(store2, entradas, ilegibles, configDir);
     marcarFase("diff", performance.now() - tDiff);
     const deletesBloqueados = entradas.length === 0 ? diffBase.borrados.length : 0;
     const diff = {
@@ -7122,7 +7137,7 @@
     const t0Total = performance.now();
     const { store: store2 } = deps;
     let head = (await store2.readCheckpoint().catch(() => null))?.since ?? 0;
-    const { diff, encoladas, deletesBloqueados } = await encolarDiff(deps, head, opciones.rescan === true);
+    const { diff, encoladas, deletesBloqueados } = await encolarDiff(deps, head, opciones.rescan === true, opciones.configDir ?? ".obsidian");
     let empujadas = 0;
     const tLista = performance.now();
     const pendientes = (await store2.listOutbox()).filter((entry) => entry.state === "pending" || entry.state === "sent").sort((a, b) => a.queuedAt - b.queuedAt);
@@ -7414,7 +7429,10 @@
     if (deps.modo === "pull-only" || deps.modo === "mirror-remote") {
       return { estado: "convergido", pull, push: null, conflictos: [] };
     }
-    const push = await pushOnce({ store: store2, port, keys, conn, vaultUuid, epoch });
+    const push = await pushOnce(
+      { store: store2, port, keys, conn, vaultUuid, epoch },
+      { configDir: deps.configDir }
+    );
     const conflictos = [];
     if (push.conflicto !== void 0) {
       conflictos.push({
@@ -7893,6 +7911,7 @@
     return { store: exigirStore(), keys: applyKeys };
   };
   var syncConn = null;
+  var syncConfigDir = ".obsidian";
   var syncVaultMeta = null;
   var serializarOutbox = (entry) => ({
     operationId: entry.operationId,
@@ -8054,6 +8073,7 @@
         syncConn.close();
         syncConn = null;
       }
+      syncConfigDir = typeof params.configDir === "string" && params.configDir.trim() !== "" ? params.configDir.trim() : ".obsidian";
       const vaultUuid = typeof params.vaultUuid === "string" ? b64Decode(params.vaultUuid) : null;
       if (!vaultUuid || vaultUuid.length !== 16) {
         throw new Error("sync.open: falta vaultUuid (16 B en base64, el del material del vault)");
@@ -8064,6 +8084,7 @@
         vault: Number(params.vault),
         device: Number(params.device),
         keys,
+        appVersion: typeof params.appVersion === "string" ? params.appVersion : void 0,
         // El HTTP del cliente pasa por el PUENTE (mismo origen que la página): el cache del
         // preflight CORS del navegador es por URL y cada blob tiene la suya, así que un PUT
         // directo pagaba un OPTIONS de ~40 ms por blob. El puente lo reenvía con node.
@@ -8114,8 +8135,16 @@
       const { store: store2, keys } = exigirApply();
       const port = new HttpFileSystemPort(globalThis.location.origin);
       const ilegibles = /* @__PURE__ */ new Map();
-      const entradas = await escanearVault(port, keys, "", void 0, void 0, ilegibles);
-      const diff = await diffLocal(store2, entradas, ilegibles);
+      const entradas = await escanearVault(
+        port,
+        keys,
+        "",
+        void 0,
+        void 0,
+        ilegibles,
+        syncConfigDir
+      );
+      const diff = await diffLocal(store2, entradas, ilegibles, syncConfigDir);
       return {
         diff,
         entradas: entradas.map((entrada) => ({
@@ -8140,7 +8169,7 @@
           vaultUuid: syncVaultMeta.vaultUuid,
           epoch: syncVaultMeta.epoch
         },
-        { rescan: params.rescan === true }
+        { rescan: params.rescan === true, configDir: syncConfigDir }
       );
     },
     /**

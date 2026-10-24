@@ -63,7 +63,7 @@ export async function correrCiclo(deps) {
         // `push: null` es el contrato del report para "no se intentó publicar".
         return { estado: 'convergido', pull, push: null, conflictos: [] };
     }
-    const push = await pushOnce({ store, port, keys, conn, vaultUuid, epoch });
+    const push = await pushOnce({ store, port, keys, conn, vaultUuid, epoch }, { configDir: deps.configDir });
     const conflictos = [];
     if (push.conflicto !== undefined) {
         conflictos.push({

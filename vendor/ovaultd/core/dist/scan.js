@@ -25,7 +25,9 @@ export async function escanearVault(port, keys, dir = '', cache,
 contenidos, 
 /** Salida: `pathId` hex -> path de los archivos que no se pudieron stat/leer. Un fallo
  *  de lectura (EACCES, EIO, ELOOP) NO es un borrado: el diff los excluye. */
-ilegibles) {
+ilegibles, 
+/** Config dir del vault (`.obsidian` o el custom): de ahí sale lo que se excluye. */
+configDir = '.obsidian') {
     const archivos = [];
     const recorrer = async (relDir) => {
         // El puente rechaza '' (frontera estricta): la raíz del vault se pide como '.'.
@@ -33,7 +35,7 @@ ilegibles) {
         for (const entrada of listado) {
             const rel = relDir === '' ? entrada.name : `${relDir}/${entrada.name}`;
             // Exclusiones PRIMERO: una carpeta excluida no se escanea NI se recursa.
-            if (estaExcluido(rel))
+            if (estaExcluido(rel, configDir))
                 continue;
             if (entrada.isDirectory) {
                 await recorrer(rel);
@@ -127,7 +129,9 @@ ilegibles) {
     return salida;
 }
 /** Diff contra la base: qué falta empujar, con la outbox pendiente como filtro. */
-export async function diffLocal(store, entradas, ilegibles) {
+export async function diffLocal(store, entradas, ilegibles, 
+/** Config dir del vault: las entradas del índice que viven ahí no cuentan como borrado. */
+configDir = '.obsidian') {
     const base = new Map((await store.listBase()).map((entrada) => [entrada.pathId, entrada]));
     const index = new Map((await store.listIndex()).map((entrada) => [entrada.pathId, entrada]));
     const pendientes = new Set((await store.listOutbox())
@@ -180,7 +184,7 @@ export async function diffLocal(store, entradas, ilegibles) {
         if (indexEntry?.deleted === true)
             continue;
         // Excluir NO significa borrar el remoto: un path hoy excluido jamás se propone `del`.
-        if (indexEntry?.path && estaExcluido(indexEntry.path))
+        if (indexEntry?.path && estaExcluido(indexEntry.path, configDir))
             continue;
         if (pendientes.has(pathIdHex)) {
             diff.yaEncolados += 1;

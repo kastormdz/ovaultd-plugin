@@ -12,6 +12,5 @@ export interface Clasificable {
     status?: number;
     code?: string | null;
 }
-/** Clasifica un error para decidir si se reintenta, se corta o pide resync. */
 export declare function clasificarError(error: unknown): RetryKind;
 //# sourceMappingURL=retry.d.ts.map
