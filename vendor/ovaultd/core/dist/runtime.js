@@ -5784,8 +5784,9 @@
     if (candidate.pathId.length === 0) {
       throw new Error("pathId es obligatorio");
     }
-    if (candidate.blobId.length === 0 && candidate.deleted !== true) {
-      throw new Error("blobId es obligatorio salvo en un borrado");
+    const esCarpeta2 = candidate.kind === "folder" && candidate.deleted !== true;
+    if (candidate.blobId.length === 0 && candidate.deleted !== true && !esCarpeta2) {
+      throw new Error("blobId es obligatorio salvo en un borrado o una carpeta");
     }
     return {
       intentId: intentIdFor(candidate),
@@ -5976,18 +5977,23 @@
     return `${dir}${base} (conflicto ${quien} ${sello}${extra})${extension}`;
   }
   function esConflictoConservable(motivo) {
-    return motivo === "hay una edici\xF3n local posterior a la base" || motivo === "existe localmente y no hay base (dos creaciones)";
+    return motivo === "hay una edici\xF3n local posterior a la base" || motivo === "existe localmente y no hay base (dos creaciones)" || motivo === "un archivo local ocupa el camino" || motivo === "un directorio local ocupa el camino";
   }
   async function conservarLocalComoCopia(deps, ruta) {
     try {
       const actual = await deps.port.stat(ruta);
-      if (!actual?.isFile) return null;
-      const bytes = await deps.port.read(ruta);
+      if (!actual) return null;
       let destino = pathDeCopiaDeConflicto(ruta, deps.deviceName ?? "dispositivo");
       for (let n = 2; n < 50; n += 1) {
         if (!await deps.port.stat(destino)) break;
         destino = pathDeCopiaDeConflicto(ruta, deps.deviceName ?? "dispositivo", /* @__PURE__ */ new Date(), n);
       }
+      if (actual.isDirectory) {
+        await deps.port.rename(ruta, destino);
+        return destino;
+      }
+      if (!actual.isFile) return null;
+      const bytes = await deps.port.read(ruta);
       const { tempName } = await deps.port.writeTemp(dirVault(destino), bytes);
       await deps.port.rename(tempName, destino);
       return destino;
@@ -6190,6 +6196,10 @@
         await port.rename(tempName, revision.path);
       }
     } else if (!revision.deleted) {
+      if (copiaDeConflicto !== null) {
+        const ocupante = await port.stat(revision.path).catch(() => null);
+        if (ocupante?.isFile) await port.unlink(revision.path);
+      }
       await port.mkdirp(revision.path);
     }
     await store2.completeApply({
@@ -7345,6 +7355,8 @@
     let cursor = checkpoint?.since ?? 0;
     let minRev = checkpoint?.minRev ?? null;
     let applied = 0;
+    const bloqueados = [];
+    const cursorInicial = cursor;
     for (; ; ) {
       const antes = cursor;
       const cambios = await conn.pull(cursor);
@@ -7361,14 +7373,14 @@
         const registro = cambios.items[i];
         const resultado = await aplicarRegistro(deps, conn, registro);
         if (resultado.bloqueado) {
-          return {
-            status: "blocked",
-            applied,
-            headRev: cursor,
-            blocked: { rev: registro.rev, pathId: toHex(b64Decode(registro.path_id)), reason: resultado.bloqueado.reason }
-          };
+          bloqueados.push({
+            rev: registro.rev,
+            pathId: toHex(b64Decode(registro.path_id)),
+            reason: resultado.bloqueado.reason
+          });
+        } else {
+          applied += 1;
         }
-        applied += 1;
         const siguienteRegistro = cambios.items[i + 1];
         if (!siguienteRegistro || siguienteRegistro.rev !== registro.rev) {
           if (registro.rev > cursor) {
@@ -7383,7 +7395,13 @@
       }
       if (cambios.next_since <= antes || cambios.items.length === 0) break;
     }
-    return { status: "pulled", applied, headRev: cursor };
+    const status = bloqueados.length > 0 && cursor === cursorInicial ? "blocked" : "pulled";
+    return {
+      status,
+      applied,
+      headRev: cursor,
+      ...bloqueados.length > 0 ? { blocked: bloqueados[0], bloqueados } : {}
+    };
   }
 
   // src/SyncClient.ts

@@ -6,8 +6,9 @@
  *  - `since` avanza SOLO acá, al cerrar una revisión COMPLETA (aplicación recuperable).
  *    Una revisión del server trae N operaciones: escribir el cursor al aplicar la primera
  *    dejaba las demás inalcanzables para siempre (`rev > since`).
- *  - Una revisión `blocked` CORTA el ciclo: el checkpoint no puede saltar una revisión
- *    sin aplicar, así que nada posterior se aplica hasta resolverla (fase 5).
+ *  - Un `blocked` NO corta el ciclo (C-a, 0.2.21): el intent queda `blocked` (visible y
+ *    resoluble desde el Resolver) y el cursor avanza igual. Antes una sola carpeta en
+ *    conflicto dejaba al device sin bajar NADA más, para siempre.
  *  - `min_rev` mayor que `since` ⇒ **resync**: se informa SIN borrar nada — la outbox
  *    y el estado local se preservan (jamás "arreglar" el cursor borrando estado).
  */
@@ -68,6 +69,8 @@ export async function pullOnce(conn, deps) {
     let cursor = checkpoint?.since ?? 0;
     let minRev = checkpoint?.minRev ?? null;
     let applied = 0;
+    const bloqueados = [];
+    const cursorInicial = cursor;
     for (;;) {
         const antes = cursor;
         const cambios = await conn.pull(cursor);
@@ -85,16 +88,17 @@ export async function pullOnce(conn, deps) {
             const registro = cambios.items[i];
             const resultado = await aplicarRegistro(deps, conn, registro);
             if (resultado.bloqueado) {
-                // El cursor queda en la última revisión COMPLETA: la bloqueada se vuelve a pedir
-                // entera en el próximo pull (junto con las que vinieron en la misma página).
-                return {
-                    status: 'blocked',
-                    applied,
-                    headRev: cursor,
-                    blocked: { rev: registro.rev, pathId: toHex(b64Decode(registro.path_id)), reason: resultado.bloqueado.reason },
-                };
+                // El intent ya quedó `blocked` en el store (lo escribió el apply): acá sólo se
+                // registra y se SIGUE. La operación no se reintenta sola; el resto del vault sí baja.
+                bloqueados.push({
+                    rev: registro.rev,
+                    pathId: toHex(b64Decode(registro.path_id)),
+                    reason: resultado.bloqueado.reason,
+                });
             }
-            applied += 1;
+            else {
+                applied += 1;
+            }
             // ¿Se cerró la revisión? El server pagina por revisión entera, así que el cambio de
             // rev (o el fin de la página) marca que ya no queda ninguna op de esa rev sin aplicar.
             const siguienteRegistro = cambios.items[i + 1];
@@ -114,6 +118,14 @@ export async function pullOnce(conn, deps) {
         if (cambios.next_since <= antes || cambios.items.length === 0)
             break;
     }
-    return { status: 'pulled', applied, headRev: cursor };
+    // Con bloqueos pero sin avance (el único ítem era el conflicto) el estado sigue siendo
+    // `blocked` para quien mira sólo el status; si algo avanzó, el ciclo convergió igual.
+    const status = bloqueados.length > 0 && cursor === cursorInicial ? 'blocked' : 'pulled';
+    return {
+        status,
+        applied,
+        headRev: cursor,
+        ...(bloqueados.length > 0 ? { blocked: bloqueados[0], bloqueados } : {}),
+    };
 }
 //# sourceMappingURL=reconcile.js.map

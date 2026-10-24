@@ -6,6 +6,15 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 (mismo `MAJOR.MINOR` = pareja probada junta; ver ADR-0018 y la sección «Compatibility» del
 README).
 
+## [0.2.36] — 2026-10-24
+
+### Fixed
+
+- **Un conflicto de carpeta/archivo ya no congela la sync.** El pull sigue bajando el resto
+  del vault; el intent queda bloqueado y resoluble desde el Resolver.
+- **El conflicto estructural se conserva**: si el remoto trae una carpeta donde tenés un
+  archivo (o al revés), tu versión no se pierde (copia de conflicto / directorio renombrado).
+
 ## [0.2.35] — 2026-10-24
 
 ### Added

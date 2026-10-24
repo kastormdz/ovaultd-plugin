@@ -42,13 +42,19 @@ export function pathDeCopiaDeConflicto(ruta, dispositivo, cuando = new Date(), s
 }
 /**
  * Motivos del guard que se resuelven CONSERVANDO AMBOS (el remoto en el path, el local en
- * una copia), como hace Obsidian Sync. Los estructurales (directorio en el camino, ruta
- * inválida) y el borrado remoto contra un local editado siguen bloqueando: automatizar un
- * borrado o pisar un directorio no es seguro.
+ * una copia), como hace Obsidian Sync.
+ *
+ * Los ESTRUCTURALES también se conservan (C-b, 0.2.21): un archivo donde va una carpeta (o
+ * al revés) ya no congela el dispositivo hasta que un humano lo toque. El local no se
+ * pierde: el archivo se copia y el directorio se RENOMBRA (atómico) a `… (conflicto …)`.
+ * El borrado remoto contra un local editado sigue bloqueando: automatizar un borrado no es
+ * seguro.
  */
 function esConflictoConservable(motivo) {
     return (motivo === 'hay una edición local posterior a la base' ||
-        motivo === 'existe localmente y no hay base (dos creaciones)');
+        motivo === 'existe localmente y no hay base (dos creaciones)' ||
+        motivo === 'un archivo local ocupa el camino' ||
+        motivo === 'un directorio local ocupa el camino');
 }
 /**
  * Copia el contenido local a `pathDeCopiaDeConflicto(...)` y devuelve el path de la copia
@@ -59,15 +65,23 @@ function esConflictoConservable(motivo) {
 async function conservarLocalComoCopia(deps, ruta) {
     try {
         const actual = await deps.port.stat(ruta);
-        if (!actual?.isFile)
+        if (!actual)
             return null;
-        const bytes = await deps.port.read(ruta);
         let destino = pathDeCopiaDeConflicto(ruta, deps.deviceName ?? 'dispositivo');
         for (let n = 2; n < 50; n += 1) {
             if (!(await deps.port.stat(destino)))
                 break;
             destino = pathDeCopiaDeConflicto(ruta, deps.deviceName ?? 'dispositivo', new Date(), n);
         }
+        if (actual.isDirectory) {
+            // Rename del ÁRBOL entero: atómico, sin copiar bytes y sin perder los hijos. El
+            // directorio original deja el nombre libre para que el remoto se publique.
+            await deps.port.rename(ruta, destino);
+            return destino;
+        }
+        if (!actual.isFile)
+            return null;
+        const bytes = await deps.port.read(ruta);
         const { tempName } = await deps.port.writeTemp(dirVault(destino), bytes);
         await deps.port.rename(tempName, destino);
         return destino;
@@ -360,6 +374,13 @@ opciones = {}) {
         }
     }
     else if (!revision.deleted) {
+        // El guard dijo `safe` porque el archivo que ocupaba el camino se conservó como copia:
+        // sigue en su lugar y `mkdirp` no lo puede reemplazar (ENOTDIR/EEXIST).
+        if (copiaDeConflicto !== null) {
+            const ocupante = await port.stat(revision.path).catch(() => null);
+            if (ocupante?.isFile)
+                await port.unlink(revision.path);
+        }
         await port.mkdirp(revision.path);
     }
     // 5) Commit atómico: cierra la intención y avanza base/índice/checkpoint.
