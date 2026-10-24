@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { debeImportar } from '../src/rutasDeImport';
+import { copiaExacta, debeImportar } from '../src/rutasDeImport';
 
 describe('debeImportar', () => {
   it('acepta notas normales (con subcarpetas, espacios y acentos)', () => {
@@ -30,5 +30,19 @@ describe('debeImportar', () => {
   it('rechaza rutas vacías o absolutas', () => {
     expect(debeImportar('')).toBe(false);
     expect(debeImportar('/etc/passwd')).toBe(false);
+  });
+});
+
+describe('copiaExacta (bytes del import)', () => {
+  it('no arrastra el pool de 8 KB de Node', () => {
+    // Un Buffer chico vive en el pool: `slice()` es un view y `.buffer` mide 8192.
+    const pool = Buffer.alloc(8192, 0x41);
+    const vista = pool.subarray(8, 108); // 100 bytes reales del archivo
+    const copia = copiaExacta(vista);
+
+    expect(copia.byteLength).toBe(100);
+    expect(new Uint8Array(copia)).toEqual(new Uint8Array(vista));
+    // Control: el patrón viejo devolvía el pool entero.
+    expect(vista.slice().buffer.byteLength).toBe(8192);
   });
 });

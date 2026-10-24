@@ -124,7 +124,9 @@ export declare class StateStore {
     /** Cierra la conexión (los datos quedan durables en el perfil). */
     close(): void;
     readCheckpoint(): Promise<CheckpointEntry | null>;
-    writeCheckpoint(entry: Omit<CheckpointEntry, 'id'>): Promise<CheckpointEntry>;
+    writeCheckpoint(entry: Omit<CheckpointEntry, 'id' | 'updatedAt'> & {
+        updatedAt?: number;
+    }): Promise<CheckpointEntry>;
     getIndex(pathId: string): Promise<IndexEntry | null>;
     putIndex(entry: IndexEntry): Promise<void>;
     deleteIndex(pathId: string): Promise<void>;

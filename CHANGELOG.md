@@ -6,6 +6,20 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 (mismo `MAJOR.MINOR` = pareja probada junta; ver ADR-0018 y la sección «Compatibility» del
 README).
 
+## [0.2.33] — 2026-10-24
+
+### Fixed
+
+- **El import ya no corrompe las notas chicas.** `Buffer#slice()` no copia: devuelve una
+  vista y `.buffer` es el pool de 8 KB de Node, así que cada archivo menor a 4 KB se
+  escribía con 8192 bytes (con memoria ajena) y el motor lo publicaba así a todos los
+  devices. Ahora `copiaExacta()` copia en un buffer del tamaño justo, en el import y en
+  el adapter.
+- **El motor trae el core 0.2.15**: un archivo que no se puede leer ya no se interpreta
+  como borrado (queda fuera del ciclo y no se propaga `del`), el cursor del pull avanza
+  sólo cuando la revisión completa quedó aplicada (una rev trae N operaciones), y un
+  batch con dos operaciones del mismo path ya no deja el push trabado para siempre.
+
 ## [0.2.27] — 2026-10-19
 
 ### Fixed

@@ -34,6 +34,8 @@ export interface DiffLocal {
         pathId: string;
         path?: string;
     }>;
+    /** Paths que existían en el listado pero no se pudieron stat/leer en este ciclo. */
+    ilegibles: string[];
     sinCambios: number;
     /** Cambios ya encolados (outbox pendiente): el diff NO los vuelve a encolar. */
     yaEncolados: number;
@@ -46,9 +48,12 @@ export declare function escanearVault(port: FileSystemPort, keys: SubKeys, dir?:
 }>, 
 /** Si se pasa, el escaneo deja acá los bytes leídos: el push los reusa para encolar el
  *  snapshot en vez de volver a pedir cada archivo al puente (una lectura por archivo). */
-contenidos?: Map<string, Uint8Array>): Promise<EntradaEscaneada[]>;
+contenidos?: Map<string, Uint8Array>, 
+/** Salida: `pathId` hex -> path de los archivos que no se pudieron stat/leer. Un fallo
+ *  de lectura (EACCES, EIO, ELOOP) NO es un borrado: el diff los excluye. */
+ilegibles?: Map<string, string>): Promise<EntradaEscaneada[]>;
 /** Diff contra la base: qué falta empujar, con la outbox pendiente como filtro. */
-export declare function diffLocal(store: StateStore, entradas: EntradaEscaneada[]): Promise<DiffLocal>;
+export declare function diffLocal(store: StateStore, entradas: EntradaEscaneada[], ilegibles?: Map<string, string>): Promise<DiffLocal>;
 /** Resumen humano del diff (lo usan `list-local` y los reportes de sync). */
 export declare const resumirDiff: (diff: DiffLocal) => string;
 //# sourceMappingURL=scan.d.ts.map

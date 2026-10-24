@@ -22,7 +22,7 @@ import { exportarVault, type PuertoDeExport } from '@ovaultd/core';
 
 import { fsDesktop } from './fsDesktop';
 import type PluginOvaultd from './main';
-import { debeImportar } from './rutasDeImport';
+import { copiaExacta, debeImportar } from './rutasDeImport';
 
 import { dirDelPlugin } from './rutas';
 
@@ -135,7 +135,7 @@ export async function ejecutarImport(
 
       await crearPadres(adapter, rel);
       const bytes = fsd.fs.readFileSync(fsd.path.join(raiz, rel));
-      await adapter.writeBinary(rel, bytes.slice().buffer);
+      await adapter.writeBinary(rel, copiaExacta(bytes));
       importados += 1;
       aviso.messageEl.setText(`ovaultd: importando… ${importados + saltados}/${archivos.length}`);
     }

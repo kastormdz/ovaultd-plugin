@@ -64,10 +64,11 @@ rescan = false) {
     ]));
     const contenidos = new Map();
     const tScan = performance.now();
-    const entradas = await escanearVault(port, keys, '', cache, contenidos);
+    const ilegibles = new Map();
+    const entradas = await escanearVault(port, keys, '', cache, contenidos, ilegibles);
     marcarFase('scan', performance.now() - tScan);
     const tDiff = performance.now();
-    const diffBase = await diffLocal(store, entradas);
+    const diffBase = await diffLocal(store, entradas, ilegibles);
     marcarFase('diff', performance.now() - tDiff);
     // Un cliente VACÍO no borra el remoto (aceptación de fase 3): sin un solo archivo en
     // disco, los deletes del diff no son una intención — se bloquean y se informan.
@@ -140,6 +141,7 @@ rescan = false) {
             borrados: diff.borrados.length,
             sinCambios: diff.sinCambios,
             yaEncolados: diff.yaEncolados,
+            ilegibles: diff.ilegibles.length,
         },
         encoladas,
         deletesBloqueados,

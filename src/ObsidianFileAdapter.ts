@@ -18,6 +18,7 @@
 
 import { cryptoProvider } from '@ovaultd/crypto';
 import { ventana } from './entorno';
+import { copiaExacta } from './rutasDeImport';
 import type { FileSystemPort, VaultDirEntry, VaultStat } from '@ovaultd/core';
 import { toHex } from '@ovaultd/protocol';
 import type { DataAdapter, EventRef, ListedFiles, TAbstractFile, Vault } from 'obsidian';
@@ -28,7 +29,7 @@ const MAX_ESPERADOS = 500;
 
 const esCarpetaAbstracta = (archivo: TAbstractFile): boolean => 'children' in archivo;
 
-const arrayBufferExacto = (bytes: Uint8Array): ArrayBuffer => bytes.slice().buffer;
+const arrayBufferExacto = (bytes: Uint8Array): ArrayBuffer => copiaExacta(bytes);
 
 export class AdaptadorDeArchivos implements FileSystemPort {
   /** tempRel → sha256 hex del contenido que nosotros escribimos. */

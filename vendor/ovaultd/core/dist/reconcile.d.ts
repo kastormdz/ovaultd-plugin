@@ -3,7 +3,9 @@
  * llega con el comando `sync` del CLI).
  *
  * Reglas:
- *  - `since` avanza SOLO por `completeApply` (aplicación recuperable) — acá no se toca.
+ *  - `since` avanza SOLO acá, al cerrar una revisión COMPLETA (aplicación recuperable).
+ *    Una revisión del server trae N operaciones: escribir el cursor al aplicar la primera
+ *    dejaba las demás inalcanzables para siempre (`rev > since`).
  *  - Una revisión `blocked` CORTA el ciclo: el checkpoint no puede saltar una revisión
  *    sin aplicar, así que nada posterior se aplica hasta resolverla (fase 5).
  *  - `min_rev` mayor que `since` ⇒ **resync**: se informa SIN borrar nada — la outbox

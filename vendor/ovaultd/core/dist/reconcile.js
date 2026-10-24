@@ -3,7 +3,9 @@
  * llega con el comando `sync` del CLI).
  *
  * Reglas:
- *  - `since` avanza SOLO por `completeApply` (aplicación recuperable) — acá no se toca.
+ *  - `since` avanza SOLO acá, al cerrar una revisión COMPLETA (aplicación recuperable).
+ *    Una revisión del server trae N operaciones: escribir el cursor al aplicar la primera
+ *    dejaba las demás inalcanzables para siempre (`rev > since`).
  *  - Una revisión `blocked` CORTA el ciclo: el checkpoint no puede saltar una revisión
  *    sin aplicar, así que nada posterior se aplica hasta resolverla (fase 5).
  *  - `min_rev` mayor que `since` ⇒ **resync**: se informa SIN borrar nada — la outbox
@@ -64,8 +66,10 @@ async function aplicarRegistro(deps, conn, registro) {
 export async function pullOnce(conn, deps) {
     const checkpoint = await deps.store.readCheckpoint().catch(() => null);
     let cursor = checkpoint?.since ?? 0;
+    let minRev = checkpoint?.minRev ?? null;
     let applied = 0;
     for (;;) {
+        const antes = cursor;
         const cambios = await conn.pull(cursor);
         if (cambios.min_rev != null && cursor < cambios.min_rev) {
             return {
@@ -75,9 +79,14 @@ export async function pullOnce(conn, deps) {
                 resync: { since: cursor, minRev: cambios.min_rev },
             };
         }
-        for (const registro of cambios.items) {
+        if (cambios.min_rev != null)
+            minRev = cambios.min_rev;
+        for (let i = 0; i < cambios.items.length; i += 1) {
+            const registro = cambios.items[i];
             const resultado = await aplicarRegistro(deps, conn, registro);
             if (resultado.bloqueado) {
+                // El cursor queda en la última revisión COMPLETA: la bloqueada se vuelve a pedir
+                // entera en el próximo pull (junto con las que vinieron en la misma página).
                 return {
                     status: 'blocked',
                     applied,
@@ -86,11 +95,24 @@ export async function pullOnce(conn, deps) {
                 };
             }
             applied += 1;
+            // ¿Se cerró la revisión? El server pagina por revisión entera, así que el cambio de
+            // rev (o el fin de la página) marca que ya no queda ninguna op de esa rev sin aplicar.
+            const siguienteRegistro = cambios.items[i + 1];
+            if (!siguienteRegistro || siguienteRegistro.rev !== registro.rev) {
+                if (registro.rev > cursor) {
+                    cursor = registro.rev;
+                    await deps.store.writeCheckpoint({ since: cursor, minRev });
+                }
+            }
         }
-        const siguiente = cambios.next_since;
-        if (siguiente <= cursor)
-            break; // la página no avanzó: no hay más
-        cursor = siguiente;
+        // Página sin operaciones (o con menos de las que el server ya consideró vistas): el
+        // server garantiza que hasta `next_since` no queda nada pendiente.
+        if (cambios.next_since > cursor) {
+            cursor = cambios.next_since;
+            await deps.store.writeCheckpoint({ since: cursor, minRev });
+        }
+        if (cambios.next_since <= antes || cambios.items.length === 0)
+            break;
     }
     return { status: 'pulled', applied, headRev: cursor };
 }

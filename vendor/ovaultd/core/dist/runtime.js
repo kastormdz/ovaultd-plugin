@@ -6196,8 +6196,9 @@
         contentHash: revision.deleted ? null : revision.contentHash ?? hashVerificado,
         size: plaintext ? plaintext.length : null,
         mtime: null
-      },
-      checkpoint: { since: revision.rev, minRev: null }
+      }
+      // Sin `checkpoint`: una revisión del server trae N operaciones y el cursor sólo puede
+      // pasar la rev cuando TODAS quedaron aplicadas. Lo escribe `pullOnce` al cerrarla.
     });
     return copiaDeConflicto !== null ? { status: "conflicted-copy", intentId: intent.intentId, copia: copiaDeConflicto } : { status: "applied", intentId: intent.intentId };
   }
@@ -6224,8 +6225,8 @@
         ...destino,
         size: stat?.size ?? null,
         mtime: null
-      },
-      checkpoint: { since: intent.rev, minRev: null }
+      }
+      // Sin `checkpoint`: lo mueve `pullOnce` al cerrar la revisión completa (ver arriba).
     });
   }
   var SELLO_DESCARTES = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-").slice(0, 19);
@@ -6518,7 +6519,7 @@
   var estaExcluido = (path, configDir = ".obsidian") => motivoDeExclusion(path, configDir) !== null;
 
   // src/scan.ts
-  async function escanearVault(port, keys, dir = "", cache, contenidos) {
+  async function escanearVault(port, keys, dir = "", cache, contenidos, ilegibles) {
     const archivos = [];
     const recorrer = async (relDir) => {
       const listado = await port.list(relDir === "" ? "." : relDir);
@@ -6540,7 +6541,10 @@
     for (let i = 0; i < archivos.length; i += 1) {
       const rel = archivos[i];
       const stat = stats[i] ?? null;
-      if (stat === null) continue;
+      if (stat === null) {
+        ilegibles?.set(toHex(pathId(keys, rel)), rel);
+        continue;
+      }
       const recordado = cache?.get(rel);
       if (recordado && recordado.contentHash != null && recordado.mtime === stat.mtimeMs && recordado.size === stat.size) {
         salida.push({
@@ -6577,7 +6581,10 @@
     }
     for (const { rel, stat } of porLeer) {
       const bytes = leidos.get(rel);
-      if (!bytes) continue;
+      if (!bytes) {
+        ilegibles?.set(toHex(pathId(keys, rel)), rel);
+        continue;
+      }
       salida.push({
         path: rel,
         pathId: toHex(pathId(keys, rel)),
@@ -6589,14 +6596,21 @@
     salida.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
     return salida;
   }
-  async function diffLocal(store2, entradas) {
+  async function diffLocal(store2, entradas, ilegibles) {
     const base = new Map((await store2.listBase()).map((entrada) => [entrada.pathId, entrada]));
     const index = new Map((await store2.listIndex()).map((entrada) => [entrada.pathId, entrada]));
     const pendientes = new Set(
       (await store2.listOutbox()).filter((entrada) => entrada.state !== "confirmed").map((entrada) => entrada.pathId)
     );
     const enDisco = /* @__PURE__ */ new Set();
-    const diff = { nuevos: [], modificados: [], borrados: [], sinCambios: 0, yaEncolados: 0 };
+    const diff = {
+      nuevos: [],
+      modificados: [],
+      borrados: [],
+      ilegibles: ilegibles ? [...ilegibles.values()] : [],
+      sinCambios: 0,
+      yaEncolados: 0
+    };
     for (const archivo of entradas) {
       enDisco.add(archivo.pathId);
       const baseEntry = base.get(archivo.pathId);
@@ -6620,6 +6634,7 @@
     }
     for (const [pathIdHex, baseEntry] of base) {
       if (enDisco.has(pathIdHex) || baseEntry.contentHash == null) continue;
+      if (ilegibles?.has(pathIdHex)) continue;
       const indexEntry = index.get(pathIdHex);
       if (indexEntry?.deleted === true) continue;
       if (indexEntry?.path && estaExcluido(indexEntry.path)) continue;
@@ -6881,10 +6896,11 @@
     );
     const contenidos = /* @__PURE__ */ new Map();
     const tScan = performance.now();
-    const entradas = await escanearVault(port, keys, "", cache, contenidos);
+    const ilegibles = /* @__PURE__ */ new Map();
+    const entradas = await escanearVault(port, keys, "", cache, contenidos, ilegibles);
     marcarFase("scan", performance.now() - tScan);
     const tDiff = performance.now();
-    const diffBase = await diffLocal(store2, entradas);
+    const diffBase = await diffLocal(store2, entradas, ilegibles);
     marcarFase("diff", performance.now() - tDiff);
     const deletesBloqueados = entradas.length === 0 ? diffBase.borrados.length : 0;
     const diff = {
@@ -6954,7 +6970,8 @@
         modificados: diff.modificados.length,
         borrados: diff.borrados.length,
         sinCambios: diff.sinCambios,
-        yaEncolados: diff.yaEncolados
+        yaEncolados: diff.yaEncolados,
+        ilegibles: diff.ilegibles.length
       },
       encoladas,
       deletesBloqueados
@@ -7274,8 +7291,10 @@
   async function pullOnce(conn, deps) {
     const checkpoint = await deps.store.readCheckpoint().catch(() => null);
     let cursor = checkpoint?.since ?? 0;
+    let minRev = checkpoint?.minRev ?? null;
     let applied = 0;
     for (; ; ) {
+      const antes = cursor;
       const cambios = await conn.pull(cursor);
       if (cambios.min_rev != null && cursor < cambios.min_rev) {
         return {
@@ -7285,7 +7304,9 @@
           resync: { since: cursor, minRev: cambios.min_rev }
         };
       }
-      for (const registro of cambios.items) {
+      if (cambios.min_rev != null) minRev = cambios.min_rev;
+      for (let i = 0; i < cambios.items.length; i += 1) {
+        const registro = cambios.items[i];
         const resultado = await aplicarRegistro(deps, conn, registro);
         if (resultado.bloqueado) {
           return {
@@ -7296,10 +7317,19 @@
           };
         }
         applied += 1;
+        const siguienteRegistro = cambios.items[i + 1];
+        if (!siguienteRegistro || siguienteRegistro.rev !== registro.rev) {
+          if (registro.rev > cursor) {
+            cursor = registro.rev;
+            await deps.store.writeCheckpoint({ since: cursor, minRev });
+          }
+        }
       }
-      const siguiente = cambios.next_since;
-      if (siguiente <= cursor) break;
-      cursor = siguiente;
+      if (cambios.next_since > cursor) {
+        cursor = cambios.next_since;
+        await deps.store.writeCheckpoint({ since: cursor, minRev });
+      }
+      if (cambios.next_since <= antes || cambios.items.length === 0) break;
     }
     return { status: "pulled", applied, headRev: cursor };
   }
@@ -7645,7 +7675,13 @@
       return await this.db.get("checkpoint", "checkpoint") ?? null;
     }
     async writeCheckpoint(entry) {
-      const value = { id: "checkpoint", ...entry };
+      const actual = await this.db.get("checkpoint", "checkpoint");
+      const value = {
+        id: "checkpoint",
+        since: actual ? Math.max(actual.since, entry.since) : entry.since,
+        minRev: entry.minRev ?? actual?.minRev ?? null,
+        updatedAt: entry.updatedAt ?? Date.now()
+      };
       await this.db.put("checkpoint", value);
       return value;
     }
@@ -7995,7 +8031,12 @@
             body: cuerpo ?? null
           });
           if (!res.ok) throw new Error(`puente proxyFetch: HTTP ${res.status}`);
-          const status = Number(res.headers.get("x-ovaultd-status") ?? 502);
+          const crudoStatus = res.headers.get("x-ovaultd-status");
+          if (crudoStatus === null) {
+            const detalle = (await res.text()).slice(0, 300);
+            throw new Error(`puente proxyFetch rechaz\xF3 la petici\xF3n: ${detalle}`);
+          }
+          const status = Number(crudoStatus);
           const bytes = await res.arrayBuffer();
           return new Response(bytes.byteLength ? bytes : null, { status });
         }
@@ -8019,8 +8060,9 @@
     "sync.scan": async () => {
       const { store: store2, keys } = exigirApply();
       const port = new HttpFileSystemPort(globalThis.location.origin);
-      const entradas = await escanearVault(port, keys);
-      const diff = await diffLocal(store2, entradas);
+      const ilegibles = /* @__PURE__ */ new Map();
+      const entradas = await escanearVault(port, keys, "", void 0, void 0, ilegibles);
+      const diff = await diffLocal(store2, entradas, ilegibles);
       return {
         diff,
         entradas: entradas.map((entrada) => ({

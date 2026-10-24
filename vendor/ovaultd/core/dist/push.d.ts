@@ -33,6 +33,8 @@ export interface PushReport {
         borrados: number;
         sinCambios: number;
         yaEncolados: number;
+        /** Archivos listados que no se pudieron leer: ni suben ni se borran este ciclo. */
+        ilegibles: number;
     };
     encoladas: number;
     empujadas: number;

@@ -312,7 +312,15 @@ const handlers: Record<string, Handler> = {
           body: cuerpo ?? null,
         });
         if (!res.ok) throw new Error(`puente proxyFetch: HTTP ${res.status}`);
-        const status = Number(res.headers.get('x-ovaultd-status') ?? 502);
+        // El puente puede rechazar la petición (allowlist o token) SIN hablar con el server:
+        // en ese caso no manda `x-ovaultd-status` y el body trae el motivo. Un default de 502
+        // convertía un "destino rechazado" en un 502 fantasma.
+        const crudoStatus = res.headers.get('x-ovaultd-status');
+        if (crudoStatus === null) {
+          const detalle = (await res.text()).slice(0, 300);
+          throw new Error(`puente proxyFetch rechazó la petición: ${detalle}`);
+        }
+        const status = Number(crudoStatus);
         const bytes = await res.arrayBuffer();
         return new Response(bytes.byteLength ? bytes : null, { status });
       },
@@ -338,8 +346,9 @@ const handlers: Record<string, Handler> = {
   'sync.scan': async () => {
     const { store, keys } = exigirApply();
     const port = new HttpFileSystemPort(globalThis.location.origin);
-    const entradas = await escanearVault(port, keys);
-    const diff = await diffLocal(store, entradas);
+    const ilegibles = new Map<string, string>();
+    const entradas = await escanearVault(port, keys, '', undefined, undefined, ilegibles);
+    const diff = await diffLocal(store, entradas, ilegibles);
     return {
       diff,
       entradas: entradas.map((entrada) => ({

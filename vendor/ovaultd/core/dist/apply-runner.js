@@ -362,7 +362,8 @@ opciones = {}) {
             size: plaintext ? plaintext.length : null,
             mtime: null,
         },
-        checkpoint: { since: revision.rev, minRev: null },
+        // Sin `checkpoint`: una revisión del server trae N operaciones y el cursor sólo puede
+        // pasar la rev cuando TODAS quedaron aplicadas. Lo escribe `pullOnce` al cerrarla.
     });
     return copiaDeConflicto !== null
         ? { status: 'conflicted-copy', intentId: intent.intentId, copia: copiaDeConflicto }
@@ -398,7 +399,7 @@ async function commitDesdeIntento(deps, intent) {
             size: stat?.size ?? null,
             mtime: null,
         },
-        checkpoint: { since: intent.rev, minRev: null },
+        // Sin `checkpoint`: lo mueve `pullOnce` al cerrar la revisión completa (ver arriba).
     });
 }
 /**
@@ -550,7 +551,7 @@ export async function resolverBloqueado(deps, intent, eleccion, conn) {
             size: stat?.size ?? null,
             mtime: null,
         },
-        checkpoint: { since: intent.rev, minRev: null },
+        // Sin `checkpoint`: lo mueve `pullOnce` al cerrar la revisión completa (ver arriba).
     });
     return { status: 'applied', intentId: intent.intentId };
 }

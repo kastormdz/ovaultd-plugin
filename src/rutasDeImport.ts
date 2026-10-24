@@ -12,6 +12,19 @@ import { estaExcluido } from '@ovaultd/core';
 
 const RUTA_POSIX = /^[^/]/;
 
+/**
+ * Copia EXACTA de los bytes en un ArrayBuffer del tamaño justo.
+ *
+ * `Buffer#slice()` no copia: devuelve una vista y `.buffer` es el **pool de 8 KB** de
+ * Node, así que `bytes.slice().buffer` escribe 8192 bytes (con memoria ajena) por cada
+ * archivo menor a 4 KB. Un `Uint8Array` nuevo sí copia y su buffer mide lo que debe.
+ */
+export function copiaExacta(bytes: Uint8Array): ArrayBuffer {
+  const copia = new Uint8Array(bytes.byteLength);
+  copia.set(bytes);
+  return copia.buffer;
+}
+
 export function debeImportar(rutaRelativa: string): boolean {
   if (!RUTA_POSIX.test(rutaRelativa)) return false; // vacía o absoluta: no
 

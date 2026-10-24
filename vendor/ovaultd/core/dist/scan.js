@@ -22,7 +22,10 @@ import { estaExcluido } from './SyncFilter.js';
 export async function escanearVault(port, keys, dir = '', cache, 
 /** Si se pasa, el escaneo deja acá los bytes leídos: el push los reusa para encolar el
  *  snapshot en vez de volver a pedir cada archivo al puente (una lectura por archivo). */
-contenidos) {
+contenidos, 
+/** Salida: `pathId` hex -> path de los archivos que no se pudieron stat/leer. Un fallo
+ *  de lectura (EACCES, EIO, ELOOP) NO es un borrado: el diff los excluye. */
+ilegibles) {
     const archivos = [];
     const recorrer = async (relDir) => {
         // El puente rechaza '' (frontera estricta): la raíz del vault se pide como '.'.
@@ -52,9 +55,13 @@ contenidos) {
     for (let i = 0; i < archivos.length; i += 1) {
         const rel = archivos[i];
         const stat = stats[i] ?? null;
-        // Se fue entre el list y el stat: no hay nada que sincronizar de este path.
-        if (stat === null)
+        // El archivo estaba en el listado: si el stat falla, "no existe" no es la única
+        // explicación (puede ser EACCES, EIO, ELOOP). Se marca ilegible y NO se sincroniza:
+        // el diff no puede convertirlo en `del` o se borra en todos los devices.
+        if (stat === null) {
+            ilegibles?.set(toHex(calcularPathId(keys, rel)), rel);
             continue;
+        }
         // Escaneo incremental: si el archivo no cambió (mismo mtime y tamaño) el hash del
         // índice sigue valiendo y NO se lee el contenido. Un vault de 100 MB pasa de ~8 s
         // a milisegundos por ciclo. El riesgo de un mtime falseado lo cubren el watcher
@@ -102,9 +109,12 @@ contenidos) {
     }
     for (const { rel, stat } of porLeer) {
         const bytes = leidos.get(rel);
-        // Se fue entre el stat y el read: no se puede hashear lo que ya no está.
-        if (!bytes)
+        // Mismo criterio que el stat: el archivo estaba listado y con stat bueno, así que un
+        // read fallido es un problema de acceso, no un borrado. Queda fuera de este ciclo.
+        if (!bytes) {
+            ilegibles?.set(toHex(calcularPathId(keys, rel)), rel);
             continue;
+        }
         salida.push({
             path: rel,
             pathId: toHex(calcularPathId(keys, rel)),
@@ -117,14 +127,21 @@ contenidos) {
     return salida;
 }
 /** Diff contra la base: qué falta empujar, con la outbox pendiente como filtro. */
-export async function diffLocal(store, entradas) {
+export async function diffLocal(store, entradas, ilegibles) {
     const base = new Map((await store.listBase()).map((entrada) => [entrada.pathId, entrada]));
     const index = new Map((await store.listIndex()).map((entrada) => [entrada.pathId, entrada]));
     const pendientes = new Set((await store.listOutbox())
         .filter((entrada) => entrada.state !== 'confirmed')
         .map((entrada) => entrada.pathId));
     const enDisco = new Set();
-    const diff = { nuevos: [], modificados: [], borrados: [], sinCambios: 0, yaEncolados: 0 };
+    const diff = {
+        nuevos: [],
+        modificados: [],
+        borrados: [],
+        ilegibles: ilegibles ? [...ilegibles.values()] : [],
+        sinCambios: 0,
+        yaEncolados: 0,
+    };
     for (const archivo of entradas) {
         enDisco.add(archivo.pathId);
         const baseEntry = base.get(archivo.pathId);
@@ -154,6 +171,9 @@ export async function diffLocal(store, entradas) {
     for (const [pathIdHex, baseEntry] of base) {
         if (enDisco.has(pathIdHex) || baseEntry.contentHash == null)
             continue;
+        // Un path que este ciclo no se pudo leer sigue existiendo: no es un borrado.
+        if (ilegibles?.has(pathIdHex))
+            continue;
         const indexEntry = index.get(pathIdHex);
         if (indexEntry?.deleted === true)
             continue;
@@ -170,5 +190,6 @@ export async function diffLocal(store, entradas) {
 }
 /** Resumen humano del diff (lo usan `list-local` y los reportes de sync). */
 export const resumirDiff = (diff) => `nuevos=${diff.nuevos.length} modificados=${diff.modificados.length} ` +
-    `borrados=${diff.borrados.length} sinCambios=${diff.sinCambios} yaEncolados=${diff.yaEncolados}`;
+    `borrados=${diff.borrados.length} sinCambios=${diff.sinCambios} ` +
+    `yaEncolados=${diff.yaEncolados} ilegibles=${diff.ilegibles.length}`;
 //# sourceMappingURL=scan.js.map
