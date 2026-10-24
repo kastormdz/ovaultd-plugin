@@ -33,6 +33,13 @@ export interface EnqueueRequest {
 }
 /** `operation_id` determinista por payload (16 B → UUID textual). */
 export declare function operationIdFor(req: EnqueueRequest): string;
+/** Entradas que siguen esperando salir (ni confirmadas ni en cuarentena). */
+export declare const estaPendiente: (entry: OutboxEntry) => boolean;
+/**
+ * Entradas que quedaron obsoletas para un path: el pull acaba de dejar la versión del
+ * server como base de ese path, así que publicar el snapshot local viejo la pisaría.
+ */
+export declare function obsoletasDePath(entries: OutboxEntry[], pathId: string): OutboxEntry[];
 /** Valida y materializa una entrada de outbox. No toca el store (eso es del commit). */
 export declare function prepareOutboxEntry(req: EnqueueRequest): OutboxEntry;
 //# sourceMappingURL=outbox.d.ts.map

@@ -15,6 +15,7 @@
  * aplicada. Este archivo no conoce el wire: es estado puro.
  */
 import { openDB } from 'idb';
+import { obsoletasDePath } from './outbox.js';
 export const SCHEMA_VERSION = 1;
 export const DB_NAME_DEFAULT = 'ovaultd';
 export const STORE_NAMES = [
@@ -134,11 +135,28 @@ export class StateStore {
         await this.db.delete('outbox', operationId);
     }
     /** Transición de estado de una operación (pending → sent → confirmed). */
-    async setOutboxState(operationId, state) {
+    /**
+     * Marca como `rejected` las entradas pendientes de un path: el pull aplicó la versión
+     * del server y publicar el snapshot local viejo pisaría esa revisión (el caso que hacía
+     * que un conflicto "resuelto" volviera atrás en el ciclo siguiente).
+     */
+    async descartarOutboxDePath(pathId, motivo) {
+        const entries = await this.db.getAll('outbox');
+        const obsoletas = obsoletasDePath(entries, pathId);
+        if (obsoletas.length === 0)
+            return 0;
+        const tx = this.db.transaction('outbox', 'readwrite');
+        for (const entry of obsoletas) {
+            await tx.store.put({ ...entry, state: 'rejected', lastError: motivo });
+        }
+        await tx.done;
+        return obsoletas.length;
+    }
+    async setOutboxState(operationId, state, lastError) {
         const entry = await this.db.get('outbox', operationId);
         if (!entry)
             throw new Error(`outbox: no existe la operación ${operationId}`);
-        const updated = { ...entry, state };
+        const updated = { ...entry, state, lastError: lastError ?? null };
         await this.db.put('outbox', updated);
         return updated;
     }

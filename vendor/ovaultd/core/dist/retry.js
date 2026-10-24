@@ -14,6 +14,10 @@ export function clasificarError(error) {
     const e = (error ?? {});
     if (e.code === 'resync_required')
         return 'resync';
+    // `SyncRejectedError` trae `code` pero NO `status`: sin este caso se clasificaba como
+    // transitorio y un `bad_request`/`max_file_exceeded` se reintentaba para siempre.
+    if (e.status === undefined && typeof e.code === 'string' && e.code !== '')
+        return 'fatal';
     if (!e.status)
         return 'transient'; // falla de red/WS: se reintenta
     if (e.status === 429 || e.status >= 500)

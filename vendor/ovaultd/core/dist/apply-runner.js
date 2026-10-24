@@ -365,6 +365,13 @@ opciones = {}) {
         // Sin `checkpoint`: una revisión del server trae N operaciones y el cursor sólo puede
         // pasar la rev cuando TODAS quedaron aplicadas. Lo escribe `pullOnce` al cerrarla.
     });
+    // La versión del server ya es la base de este path: si había una intención local
+    // pendiente del MISMO path quedó obsoleta (cuando había edición local, el guard/fusión
+    // ya la preservó en el archivo o en la copia de conflicto). Sin esto, el push publicaba
+    // el snapshot viejo y pisaba la revisión remota que se acababa de aplicar.
+    if (typeof store.descartarOutboxDePath === 'function') {
+        await store.descartarOutboxDePath(revision.pathId, 'pisada por una revisión remota aplicada en el pull');
+    }
     return copiaDeConflicto !== null
         ? { status: 'conflicted-copy', intentId: intent.intentId, copia: copiaDeConflicto }
         : { status: 'applied', intentId: intent.intentId };

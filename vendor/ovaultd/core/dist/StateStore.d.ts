@@ -55,8 +55,12 @@ export interface OutboxEntry {
     /** Snapshot recuperable del contenido local (save-first). */
     snapshot?: Blob | null;
     snapshotHash?: string | null;
-    /** Estado de publicación: pending → sent (ack) → confirmed. */
-    state: 'pending' | 'sent' | 'confirmed';
+    /** Estado de publicación: pending → sent (ack) → confirmed; `rejected` = el server la
+     *  rechazó por un problema de ESTA operación (archivo demasiado grande, sin snapshot,
+     *  bad_request) y no se reintenta sola: queda visible para el usuario. */
+    state: 'pending' | 'sent' | 'confirmed' | 'rejected';
+    /** Motivo del rechazo (sólo en `rejected`). */
+    lastError?: string | null;
     /** mtime del archivo al encolar: alimenta el cache del escaneo incremental. */
     mtimeMs?: number | null;
 }
@@ -143,7 +147,13 @@ export declare class StateStore {
     listOutbox(): Promise<OutboxEntry[]>;
     deleteOutbox(operationId: string): Promise<void>;
     /** Transición de estado de una operación (pending → sent → confirmed). */
-    setOutboxState(operationId: string, state: OutboxEntry['state']): Promise<OutboxEntry>;
+    /**
+     * Marca como `rejected` las entradas pendientes de un path: el pull aplicó la versión
+     * del server y publicar el snapshot local viejo pisaría esa revisión (el caso que hacía
+     * que un conflicto "resuelto" volviera atrás en el ciclo siguiente).
+     */
+    descartarOutboxDePath(pathId: string, motivo: string): Promise<number>;
+    setOutboxState(operationId: string, state: OutboxEntry['state'], lastError?: string | null): Promise<OutboxEntry>;
     /**
      * Confirmación de un LOTE del push en UNA transacción de IndexedDB: base + índice +
      * outbox (borrado) + checkpoint. Antes eran 4 transacciones POR NOTA (~16,5 ms cada

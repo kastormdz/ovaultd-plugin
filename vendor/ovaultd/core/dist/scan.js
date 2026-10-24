@@ -131,7 +131,9 @@ export async function diffLocal(store, entradas, ilegibles) {
     const base = new Map((await store.listBase()).map((entrada) => [entrada.pathId, entrada]));
     const index = new Map((await store.listIndex()).map((entrada) => [entrada.pathId, entrada]));
     const pendientes = new Set((await store.listOutbox())
-        .filter((entrada) => entrada.state !== 'confirmed')
+        // `rejected` no cuenta: si el usuario corrige el archivo, el diff tiene que volver a
+        // encolarlo (el operationId cambia porque incluye el hash del contenido).
+        .filter((entrada) => entrada.state === 'pending' || entrada.state === 'sent')
         .map((entrada) => entrada.pathId));
     const enDisco = new Set();
     const diff = {

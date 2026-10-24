@@ -70,6 +70,11 @@ export interface PushReport {
    * medias), no una intención del usuario.
    */
   deletesBloqueados: number;
+  /** Entradas que conflictuaron: quedan `pending` y el próximo pull las resuelve. */
+  conflictos: number;
+  /** Entradas en cuarentena (`rejected`): no se reintentan solas; el motivo queda en la
+   *  outbox y el usuario puede corregir el archivo (el diff la vuelve a encolar). */
+  rechazadas: number;
   conflicto?: { operationId: string; path?: string; mensaje: string };
 }
 
@@ -83,6 +88,27 @@ const CERO64 = new Uint8Array(64);
  * siendo por op (se reintenta de a una si el lote falla).
  */
 const TAMANO_LOTE = 1000;
+
+/** Códigos del wire que son culpa de ESTA operación (no de la red ni de la sesión). */
+const RECHAZOS_DEL_ENTRY = new Set([
+  'bad_request',
+  'max_file_exceeded',
+  'quota_exceeded',
+  'not_found',
+]);
+
+/**
+ * ¿El server rechazó la operación por cómo es (y no por red/credenciales)? `unauthorized`
+ * queda afuera a propósito: es global y reintentar con otra sesión sí sirve.
+ */
+function esRechazoDelEntry(error: unknown): boolean {
+  const codigo = (error as { code?: unknown } | null)?.code;
+  return typeof codigo === 'string' && RECHAZOS_DEL_ENTRY.has(codigo);
+}
+
+function mensajeDeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 /** Parte una lista en lotes de a lo sumo `tamano`. */
 function enLotes<T>(items: T[], tamano: number): T[][] {
@@ -217,7 +243,7 @@ async function encolarDiff(
 }
 
 /** Construye la operación del wire (cifra + firma) para una entrada de outbox. */
-async function construirOp(
+export async function construirOp(
   deps: PushDeps,
   entry: OutboxEntry,
   expectedRev: number,
@@ -288,7 +314,12 @@ async function construirOp(
     size: esDel ? null : tamano,
     mtime: esDel ? null : entry.queuedAt,
     ctime: null,
-    prev_path_id: null,
+    // Un `move` sin `prev_path_id` es `BadRequest` FATAL en el server: el entry nunca
+    // sale de la outbox y la sincronización queda congelada. El id va crudo (32 bytes).
+    prev_path_id:
+      entry.kind === 'move' && entry.prevPathId
+        ? b64Encode(fromHex(entry.prevPathId))
+        : null,
   };
 
   return { op, blobIdHex };
@@ -389,7 +420,9 @@ export async function pushOnce(deps: PushDeps, opciones: { rescan?: boolean } = 
 
   const tLista = performance.now();
   const pendientes = (await store.listOutbox())
-    .filter((entry) => entry.state !== 'confirmed')
+    // `rejected` queda afuera a propósito: no se reintenta sola. Si el usuario corrige el
+    // archivo, el diff la vuelve a encolar (el id incluye el hash del contenido).
+    .filter((entry) => entry.state === 'pending' || entry.state === 'sent')
     .sort((a, b) => a.queuedAt - b.queuedAt);
   marcarFase('listOutbox', performance.now() - tLista);
   /**
@@ -440,35 +473,45 @@ export async function pushOnce(deps: PushDeps, opciones: { rescan?: boolean } = 
     empujadas += lote.length;
   };
 
+  let rechazadas = 0;
+  let conflictos = 0;
+  let primerConflicto: NonNullable<PushReport['conflicto']> | undefined;
+
   for (const lote of enLotes(pendientes, TAMANO_LOTE)) {
     try {
       await subir(lote);
     } catch (error) {
-      if (!(error instanceof SyncConflictError)) throw error;
+      // El server es todo-o-nada por lote: si rechaza (conflicto o un 4xx del wire), se
+      // aísla reintentando de a UNA para no castigar a las demás entradas del lote.
+      if (!(error instanceof SyncConflictError) && !esRechazoDelEntry(error)) throw error;
 
-      // Un conflicto rechaza el lote ENTERO (el server es todo-o-nada). Se aísla
-      // reintentando de a una: la que conflictúa queda `pending` y el report la nombra;
-      // las demás (sin conflicto) se confirman igual.
       for (const entry of lote) {
         try {
           await subir([entry]);
         } catch (fallo) {
           if (fallo instanceof SyncConflictError) {
+            // El conflicto no se resuelve acá: el pull trae la versión del server, el
+            // guard/fusión decide, y el archivo se re-encola solo. Antes esto hacía
+            // `return` y las entradas posteriores del lote no se intentaban NUNCA.
             await store.setOutboxState(entry.operationId, 'pending');
-            return {
-              diff,
-              encoladas,
-              empujadas,
-              headRev: head,
-              deletesBloqueados,
-              conflicto: {
-                operationId: entry.operationId,
-                path: entry.path,
-                mensaje: fallo.message,
-              },
+            conflictos += 1;
+            primerConflicto ??= {
+              operationId: entry.operationId,
+              path: entry.path,
+              mensaje: fallo.message,
             };
+            continue;
           }
-          throw fallo;
+
+          if (esRechazoDelEntry(fallo)) {
+            // Cuarentena: esta operación no puede entrar (archivo > 32 MiB, sin snapshot,
+            // bad_request) y reintentarla frena toda la cola. Queda visible con el motivo.
+            await store.setOutboxState(entry.operationId, 'rejected', mensajeDeError(fallo));
+            rechazadas += 1;
+            continue;
+          }
+
+          throw fallo; // red/transitorio: corta el ciclo y se reintenta entero
         }
       }
     }
@@ -488,5 +531,14 @@ export async function pushOnce(deps: PushDeps, opciones: { rescan?: boolean } = 
       /* el diagnóstico nunca rompe el sync */
     });
   }
-  return { diff, encoladas, empujadas, headRev: head, deletesBloqueados };
+  return {
+    diff,
+    encoladas,
+    empujadas,
+    headRev: head,
+    deletesBloqueados,
+    conflictos,
+    rechazadas,
+    conflicto: primerConflicto,
+  };
 }

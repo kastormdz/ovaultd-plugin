@@ -6200,6 +6200,12 @@
       // Sin `checkpoint`: una revisión del server trae N operaciones y el cursor sólo puede
       // pasar la rev cuando TODAS quedaron aplicadas. Lo escribe `pullOnce` al cerrarla.
     });
+    if (typeof store2.descartarOutboxDePath === "function") {
+      await store2.descartarOutboxDePath(
+        revision.pathId,
+        "pisada por una revisi\xF3n remota aplicada en el pull"
+      );
+    }
     return copiaDeConflicto !== null ? { status: "conflicted-copy", intentId: intent.intentId, copia: copiaDeConflicto } : { status: "applied", intentId: intent.intentId };
   }
   async function commitDesdeIntento(deps, intent) {
@@ -6423,6 +6429,10 @@
     const digest = cryptoProvider().sha256(textEncoder.encode(canonicalPayload(req)));
     return bytesToUuid(digest.subarray(0, 16));
   }
+  var estaPendiente = (entry) => entry.state === "pending" || entry.state === "sent";
+  function obsoletasDePath(entries, pathId2) {
+    return entries.filter((entry) => entry.pathId === pathId2 && estaPendiente(entry));
+  }
   function prepareOutboxEntry(req) {
     if (!Number.isInteger(req.expectedRev) || req.expectedRev < 0) {
       throw new Error(`expectedRev inv\xE1lido: ${String(req.expectedRev)}`);
@@ -6600,7 +6610,7 @@
     const base = new Map((await store2.listBase()).map((entrada) => [entrada.pathId, entrada]));
     const index = new Map((await store2.listIndex()).map((entrada) => [entrada.pathId, entrada]));
     const pendientes = new Set(
-      (await store2.listOutbox()).filter((entrada) => entrada.state !== "confirmed").map((entrada) => entrada.pathId)
+      (await store2.listOutbox()).filter((entrada) => entrada.state === "pending" || entrada.state === "sent").map((entrada) => entrada.pathId)
     );
     const enDisco = /* @__PURE__ */ new Set();
     const diff = {
@@ -6874,6 +6884,19 @@
   var CERO32 = new Uint8Array(32);
   var CERO64 = new Uint8Array(64);
   var TAMANO_LOTE = 1e3;
+  var RECHAZOS_DEL_ENTRY = /* @__PURE__ */ new Set([
+    "bad_request",
+    "max_file_exceeded",
+    "quota_exceeded",
+    "not_found"
+  ]);
+  function esRechazoDelEntry(error) {
+    const codigo = error?.code;
+    return typeof codigo === "string" && RECHAZOS_DEL_ENTRY.has(codigo);
+  }
+  function mensajeDeError(error) {
+    return error instanceof Error ? error.message : String(error);
+  }
   function enLotes(items, tamano) {
     const lotes = [];
     for (let i = 0; i < items.length; i += tamano) lotes.push(items.slice(i, i + tamano));
@@ -7033,7 +7056,9 @@
       size: esDel ? null : tamano,
       mtime: esDel ? null : entry.queuedAt,
       ctime: null,
-      prev_path_id: null
+      // Un `move` sin `prev_path_id` es `BadRequest` FATAL en el server: el entry nunca
+      // sale de la outbox y la sincronización queda congelada. El id va crudo (32 bytes).
+      prev_path_id: entry.kind === "move" && entry.prevPathId ? b64Encode(fromHex(entry.prevPathId)) : null
     };
     return { op, blobIdHex };
   }
@@ -7100,7 +7125,7 @@
     const { diff, encoladas, deletesBloqueados } = await encolarDiff(deps, head, opciones.rescan === true);
     let empujadas = 0;
     const tLista = performance.now();
-    const pendientes = (await store2.listOutbox()).filter((entry) => entry.state !== "confirmed").sort((a, b) => a.queuedAt - b.queuedAt);
+    const pendientes = (await store2.listOutbox()).filter((entry) => entry.state === "pending" || entry.state === "sent").sort((a, b) => a.queuedAt - b.queuedAt);
     marcarFase("listOutbox", performance.now() - tLista);
     const subir = async (lote) => {
       const operationIdDelLote = lote[0].operationId;
@@ -7131,29 +7156,32 @@
       head = ack.rev;
       empujadas += lote.length;
     };
+    let rechazadas = 0;
+    let conflictos = 0;
+    let primerConflicto;
     for (const lote of enLotes(pendientes, TAMANO_LOTE)) {
       try {
         await subir(lote);
       } catch (error) {
-        if (!(error instanceof SyncConflictError)) throw error;
+        if (!(error instanceof SyncConflictError) && !esRechazoDelEntry(error)) throw error;
         for (const entry of lote) {
           try {
             await subir([entry]);
           } catch (fallo) {
             if (fallo instanceof SyncConflictError) {
               await store2.setOutboxState(entry.operationId, "pending");
-              return {
-                diff,
-                encoladas,
-                empujadas,
-                headRev: head,
-                deletesBloqueados,
-                conflicto: {
-                  operationId: entry.operationId,
-                  path: entry.path,
-                  mensaje: fallo.message
-                }
+              conflictos += 1;
+              primerConflicto ??= {
+                operationId: entry.operationId,
+                path: entry.path,
+                mensaje: fallo.message
               };
+              continue;
+            }
+            if (esRechazoDelEntry(fallo)) {
+              await store2.setOutboxState(entry.operationId, "rejected", mensajeDeError(fallo));
+              rechazadas += 1;
+              continue;
             }
             throw fallo;
           }
@@ -7170,7 +7198,16 @@
       }).catch(() => {
       });
     }
-    return { diff, encoladas, empujadas, headRev: head, deletesBloqueados };
+    return {
+      diff,
+      encoladas,
+      empujadas,
+      headRev: head,
+      deletesBloqueados,
+      conflictos,
+      rechazadas,
+      conflicto: primerConflicto
+    };
   }
 
   // src/prune.ts
@@ -7734,10 +7771,26 @@
       await this.db.delete("outbox", operationId);
     }
     /** Transición de estado de una operación (pending → sent → confirmed). */
-    async setOutboxState(operationId, state) {
+    /**
+     * Marca como `rejected` las entradas pendientes de un path: el pull aplicó la versión
+     * del server y publicar el snapshot local viejo pisaría esa revisión (el caso que hacía
+     * que un conflicto "resuelto" volviera atrás en el ciclo siguiente).
+     */
+    async descartarOutboxDePath(pathId2, motivo) {
+      const entries = await this.db.getAll("outbox");
+      const obsoletas = obsoletasDePath(entries, pathId2);
+      if (obsoletas.length === 0) return 0;
+      const tx = this.db.transaction("outbox", "readwrite");
+      for (const entry of obsoletas) {
+        await tx.store.put({ ...entry, state: "rejected", lastError: motivo });
+      }
+      await tx.done;
+      return obsoletas.length;
+    }
+    async setOutboxState(operationId, state, lastError) {
       const entry = await this.db.get("outbox", operationId);
       if (!entry) throw new Error(`outbox: no existe la operaci\xF3n ${operationId}`);
-      const updated = { ...entry, state };
+      const updated = { ...entry, state, lastError: lastError ?? null };
       await this.db.put("outbox", updated);
       return updated;
     }

@@ -18,8 +18,10 @@
  * Un batch por operación en este corte: el protocolo permite hasta 5 ops por revisión,
  * pero la corrección primero — agrupar es una optimización con CAS más delicado.
  */
+import { type BatchOpWire } from '@ovaultd/protocol';
 import type { ApplyDeps } from './apply-runner.js';
 import { type SyncConnection } from './SyncConnection.js';
+import type { OutboxEntry } from './StateStore.js';
 export interface PushDeps extends ApplyDeps {
     conn: SyncConnection;
     /** `vault_id` de 16 B (el del material, no el numérico del server). */
@@ -45,12 +47,29 @@ export interface PushReport {
      * medias), no una intención del usuario.
      */
     deletesBloqueados: number;
+    /** Entradas que conflictuaron: quedan `pending` y el próximo pull las resuelve. */
+    conflictos: number;
+    /** Entradas en cuarentena (`rejected`): no se reintentan solas; el motivo queda en la
+     *  outbox y el usuario puede corregir el archivo (el diff la vuelve a encolar). */
+    rechazadas: number;
     conflicto?: {
         operationId: string;
         path?: string;
         mensaje: string;
     };
 }
+/** Construye la operación del wire (cifra + firma) para una entrada de outbox. */
+export declare function construirOp(deps: PushDeps, entry: OutboxEntry, expectedRev: number, 
+/**
+ * `operation_id` CON EL QUE SE FIRMA: el del BATCH. El `msg_rec` lo incluye, y el
+ * server verifica cada op del lote contra el `operation_id` del batch — firmar con el
+ * de la entrada individual delata la firma (unauthorized) en cuanto el lote trae más
+ * de una operación.
+ */
+operationId: Uint8Array): Promise<{
+    op: BatchOpWire;
+    blobIdHex: string | null;
+}>;
 export declare function pushOnce(deps: PushDeps, opciones?: {
     rescan?: boolean;
 }): Promise<PushReport>;

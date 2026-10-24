@@ -6,6 +6,22 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 (mismo `MAJOR.MINOR` = pareja probada junta; ver ADR-0018 y la sección «Compatibility» del
 README).
 
+## [0.2.34] — 2026-10-24
+
+### Fixed
+
+- **`move` publica el `prev_path_id` del origen.** El wire mandaba `null` siempre, el
+  server respondía `BadRequest` (fatal) y esa entrada no salía nunca de la cola: la
+  sincronización quedaba congelada.
+- **Cuarentena de la outbox.** Una operación que el server rechaza por cómo es (archivo
+  mayor a 32 MiB, `bad_request`, sin snapshot) pasa a `rejected` con el motivo y **no
+  frena a las demás**. Antes cortaba `pushOnce` entero y, como la cola se drena desde el
+  head, volvía a fallar en cada pasada.
+- **El pull desaloja las intenciones viejas del path que aplicó.** Si había una entrada
+  pendiente del mismo archivo, publicarla después pisaba la revisión remota que se
+  acababa de aplicar (el conflicto "resuelto" volvía atrás en el ciclo siguiente).
+- **Core con `conflict` real y CAS transaccional (server 0.2.18+).**
+
 ## [0.2.33] — 2026-10-24
 
 ### Fixed

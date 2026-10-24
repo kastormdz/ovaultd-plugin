@@ -27,6 +27,15 @@ export function operationIdFor(req) {
     const digest = cryptoProvider().sha256(textEncoder.encode(canonicalPayload(req)));
     return bytesToUuid(digest.subarray(0, 16));
 }
+/** Entradas que siguen esperando salir (ni confirmadas ni en cuarentena). */
+export const estaPendiente = (entry) => entry.state === 'pending' || entry.state === 'sent';
+/**
+ * Entradas que quedaron obsoletas para un path: el pull acaba de dejar la versión del
+ * server como base de ese path, así que publicar el snapshot local viejo la pisaría.
+ */
+export function obsoletasDePath(entries, pathId) {
+    return entries.filter((entry) => entry.pathId === pathId && estaPendiente(entry));
+}
 /** Valida y materializa una entrada de outbox. No toca el store (eso es del commit). */
 export function prepareOutboxEntry(req) {
     if (!Number.isInteger(req.expectedRev) || req.expectedRev < 0) {
