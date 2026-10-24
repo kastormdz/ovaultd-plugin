@@ -12,6 +12,7 @@
  */
 import { bytesToUuid, cryptoProvider } from '@ovaultd/crypto';
 import { b64Decode, textEncoder, toHex } from '@ovaultd/protocol';
+import { bytesParaHash } from './apariencia.js';
 /** Payload canónico del que deriva la identidad de la operación. */
 const canonicalPayload = (req) => JSON.stringify({
     kind: req.kind,
@@ -62,7 +63,7 @@ export function prepareOutboxEntry(req) {
     let snapshot = null;
     if (req.contentB64 != null) {
         const bytes = b64Decode(req.contentB64);
-        const real = toHex(cryptoProvider().sha256(bytes));
+        const real = toHex(cryptoProvider().sha256(bytesParaHash(req.path, bytes)));
         if (real !== req.contentHash) {
             throw new Error(`el hash declarado no coincide con el contenido (declarado ${req.contentHash}, real ${real})`);
         }

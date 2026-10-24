@@ -20,6 +20,7 @@
  */
 import { blobId as blobIdDe, bytesToUuid, cryptoProvider, encryptBlob, identityFromSubkeys, pathEnc, signRecord, tMac, } from '@ovaultd/crypto';
 import { b64Encode, fromHex, signOpCode, toHex, } from '@ovaultd/protocol';
+import { bytesParaHash } from './apariencia.js';
 import { prepareOutboxEntry } from './outbox.js';
 import { diffLocal, escanearVault } from './scan.js';
 import { SyncConflictError } from './SyncConnection.js';
@@ -188,7 +189,7 @@ operationId) {
             throw new Error(`outbox ${entry.operationId}: sin snapshot recuperable`);
         }
         const plano = new Uint8Array(await entry.snapshot.arrayBuffer());
-        const real = toHex(cryptoProvider().sha256(plano));
+        const real = toHex(cryptoProvider().sha256(bytesParaHash(entry.path ?? '', plano)));
         if (real !== entry.snapshotHash) {
             throw new Error(`snapshot corrupto en ${entry.operationId} (declarado ${entry.snapshotHash}, real ${real})`);
         }
