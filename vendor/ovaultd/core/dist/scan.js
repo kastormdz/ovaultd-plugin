@@ -17,6 +17,7 @@
  */
 import { cryptoProvider, pathId as calcularPathId } from '@ovaultd/crypto';
 import { toHex } from '@ovaultd/protocol';
+import { bytesParaHash } from './apariencia.js';
 import { estaExcluido } from './SyncFilter.js';
 /** Recorre el vault completo (recursivo) y devuelve los archivos con su hash. */
 export async function escanearVault(port, keys, dir = '', cache, 
@@ -120,7 +121,7 @@ configDir = '.obsidian') {
         salida.push({
             path: rel,
             pathId: toHex(calcularPathId(keys, rel)),
-            contentHash: toHex(cryptoProvider().sha256(bytes)),
+            contentHash: toHex(cryptoProvider().sha256(bytesParaHash(rel, bytes))),
             size: bytes.length,
             mtimeMs: stat.mtimeMs,
         });

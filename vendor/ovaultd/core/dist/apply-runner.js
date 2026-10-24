@@ -18,7 +18,7 @@
 import { cryptoProvider, decryptBlob } from '@ovaultd/crypto';
 import { toHex } from '@ovaultd/protocol';
 import { createIntent } from './apply.js';
-import { esApariencia, mergeDeApariencia } from './apariencia.js';
+import { bytesParaHash, esApariencia, mergeDeApariencia } from './apariencia.js';
 import { esMergeablePorTipo, mergeDeTexto } from './merge.js';
 import { colisionDeCase, nombreBase, validarRutaDeVault } from './vault-path.js';
 const sha256Hex = (bytes) => toHex(cryptoProvider().sha256(bytes));
@@ -109,7 +109,9 @@ hashRemoto) {
             return { verdict: 'blocked', reason: 'un archivo local ocupa el camino' };
         return { verdict: 'safe' };
     }
-    const hashActual = actual?.isFile ? sha256Hex(await port.read(revision.path)) : null;
+    const hashActual = actual?.isFile
+        ? sha256Hex(bytesParaHash(revision.path, await port.read(revision.path)))
+        : null;
     if (revision.deleted) {
         if (!actual)
             return { verdict: 'already-gone' };
@@ -175,7 +177,7 @@ async function intentarFusionar(deps, revision, plaintextRemoto, hashRemoto, rea
         const dec = new TextDecoder('utf-8', { fatal: true });
         const textoBase = dec.decode(decryptBlob(keys, storedBase));
         const bytesOurs = await port.read(revision.path);
-        const oursHash = sha256Hex(bytesOurs);
+        const oursHash = sha256Hex(bytesParaHash(revision.path, bytesOurs));
         const textoOurs = dec.decode(bytesOurs);
         const textoTheirs = dec.decode(plaintextRemoto);
         // appearance.json NO se mergea como texto: Obsidian lo reescribe con su orden de
@@ -215,7 +217,7 @@ async function publicarFusion(deps, intent, revision, fusion) {
     intent = {
         ...intent,
         tempName,
-        contentHash: sha256Hex(fusion.fusion),
+        contentHash: sha256Hex(bytesParaHash(revision.path, fusion.fusion)),
         state: 'verified',
         mergeBase: {
             rev: revision.rev,
@@ -275,7 +277,7 @@ opciones = {}) {
     let hashVerificado = null;
     if (!revision.deleted && revision.kind === 'file') {
         plaintext = decryptBlob(deps.keys, stored);
-        hashVerificado = sha256Hex(plaintext);
+        hashVerificado = sha256Hex(bytesParaHash(revision.path, plaintext));
         if (revision.contentHash && hashVerificado !== revision.contentHash) {
             await store.deleteIntent(intent.intentId);
             throw new Error(`apply: content_hash no coincide (${hashVerificado} != ${revision.contentHash})`);
@@ -368,7 +370,7 @@ opciones = {}) {
                     const fusion = mergeDeApariencia(textoLocal, textoLocal, textoRemoto);
                     if (fusion !== textoRemoto) {
                         contenido = new TextEncoder().encode(fusion);
-                        hashContenido = sha256Hex(contenido);
+                        hashContenido = sha256Hex(bytesParaHash(intent.path ?? '', contenido));
                     }
                 }
             }
@@ -535,7 +537,9 @@ export async function recoverApplies(deps) {
             continue;
         }
         const destino = await port.stat(intent.path).catch(() => null);
-        const hashDestino = destino?.isFile ? sha256Hex(await port.read(intent.path)) : null;
+        const hashDestino = destino?.isFile
+            ? sha256Hex(bytesParaHash(intent.path, await port.read(intent.path)))
+            : null;
         if (hashDestino !== null && hashDestino === intent.contentHash) {
             // El rename ya había pasado: faltaba SOLO el commit.
             await commitDesdeIntento(deps, intent);
@@ -544,7 +548,7 @@ export async function recoverApplies(deps) {
         }
         const temp = await port.stat(intent.tempName).catch(() => null);
         if (temp?.isFile) {
-            const hashTemp = sha256Hex(await port.read(intent.tempName));
+            const hashTemp = sha256Hex(bytesParaHash(intent.path, await port.read(intent.tempName)));
             if (hashTemp !== intent.contentHash) {
                 await port.unlink(intent.tempName).catch(() => undefined);
                 await store.putIntent({ ...intent, state: 'blocked', reason: 'temporal no coincide con el esperado' });
@@ -629,7 +633,7 @@ export async function resolverBloqueado(deps, intent, eleccion, conn) {
         throw new Error('resolver: mantener la versión local de un borrado remoto todavía no está soportado');
     }
     const stored = await conn.getBlob(intent.blobId);
-    const hashRemoto = sha256Hex(decryptBlob(deps.keys, stored));
+    const hashRemoto = sha256Hex(bytesParaHash(intent.path ?? '', decryptBlob(deps.keys, stored)));
     const stat = intent.path ? await deps.port.stat(intent.path).catch(() => null) : null;
     await deps.store.completeApply({
         intentId: intent.intentId,

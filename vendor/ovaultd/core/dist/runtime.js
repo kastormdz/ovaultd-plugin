@@ -5816,6 +5816,23 @@
       return null;
     }
   };
+  function proyeccionDeApariencia(texto) {
+    const o = parsear(texto) ?? {};
+    const p = {};
+    for (const campo of CAMPOS_PORTABLES) {
+      const v = o[campo];
+      if (campo === "enabledCssSnippets" && Array.isArray(v)) {
+        p[campo] = [...v].map(String).sort();
+      } else if (v !== void 0) {
+        p[campo] = v;
+      }
+    }
+    return JSON.stringify(p);
+  }
+  function bytesParaHash(path, bytes) {
+    if (!esApariencia(path)) return bytes;
+    return CODIFICADOR.encode(proyeccionDeApariencia(DECODIFICADOR.decode(bytes)));
+  }
   function mergeDeApariencia(base, local, remoto) {
     const l = parsear(local);
     const b = parsear(base);
@@ -6014,7 +6031,7 @@
       if (actual && actual.isFile) return { verdict: "blocked", reason: "un archivo local ocupa el camino" };
       return { verdict: "safe" };
     }
-    const hashActual = actual?.isFile ? sha256Hex(await port.read(revision.path)) : null;
+    const hashActual = actual?.isFile ? sha256Hex(bytesParaHash(revision.path, await port.read(revision.path))) : null;
     if (revision.deleted) {
       if (!actual) return { verdict: "already-gone" };
       if (base?.contentHash && hashActual === base.contentHash) return { verdict: "safe" };
@@ -6045,7 +6062,7 @@
       const dec = new TextDecoder("utf-8", { fatal: true });
       const textoBase = dec.decode(decryptBlob(keys, storedBase));
       const bytesOurs = await port.read(revision.path);
-      const oursHash = sha256Hex(bytesOurs);
+      const oursHash = sha256Hex(bytesParaHash(revision.path, bytesOurs));
       const textoOurs = dec.decode(bytesOurs);
       const textoTheirs = dec.decode(plaintextRemoto);
       if (esApariencia(revision.path)) {
@@ -6070,7 +6087,7 @@
     intent = {
       ...intent,
       tempName,
-      contentHash: sha256Hex(fusion.fusion),
+      contentHash: sha256Hex(bytesParaHash(revision.path, fusion.fusion)),
       state: "verified",
       mergeBase: {
         rev: revision.rev,
@@ -6119,7 +6136,7 @@
     let hashVerificado = null;
     if (!revision.deleted && revision.kind === "file") {
       plaintext = decryptBlob(deps.keys, stored);
-      hashVerificado = sha256Hex(plaintext);
+      hashVerificado = sha256Hex(bytesParaHash(revision.path, plaintext));
       if (revision.contentHash && hashVerificado !== revision.contentHash) {
         await store2.deleteIntent(intent.intentId);
         throw new Error(
@@ -6187,7 +6204,7 @@
             const fusion = mergeDeApariencia(textoLocal, textoLocal, textoRemoto);
             if (fusion !== textoRemoto) {
               contenido = new TextEncoder().encode(fusion);
-              hashContenido = sha256Hex(contenido);
+              hashContenido = sha256Hex(bytesParaHash(intent.path ?? "", contenido));
             }
           }
         }
@@ -6317,7 +6334,7 @@
         continue;
       }
       const destino = await port.stat(intent.path).catch(() => null);
-      const hashDestino = destino?.isFile ? sha256Hex(await port.read(intent.path)) : null;
+      const hashDestino = destino?.isFile ? sha256Hex(bytesParaHash(intent.path, await port.read(intent.path))) : null;
       if (hashDestino !== null && hashDestino === intent.contentHash) {
         await commitDesdeIntento(deps, intent);
         reporte.completed += 1;
@@ -6325,7 +6342,7 @@
       }
       const temp = await port.stat(intent.tempName).catch(() => null);
       if (temp?.isFile) {
-        const hashTemp = sha256Hex(await port.read(intent.tempName));
+        const hashTemp = sha256Hex(bytesParaHash(intent.path, await port.read(intent.tempName)));
         if (hashTemp !== intent.contentHash) {
           await port.unlink(intent.tempName).catch(() => void 0);
           await store2.putIntent({ ...intent, state: "blocked", reason: "temporal no coincide con el esperado" });
@@ -6663,7 +6680,7 @@
       salida.push({
         path: rel,
         pathId: toHex(pathId(keys, rel)),
-        contentHash: toHex(cryptoProvider().sha256(bytes)),
+        contentHash: toHex(cryptoProvider().sha256(bytesParaHash(rel, bytes))),
         size: bytes.length,
         mtimeMs: stat.mtimeMs
       });

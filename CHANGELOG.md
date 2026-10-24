@@ -1,3 +1,15 @@
+## [0.3.1] — 2026-10-24
+
+### Fixed
+
+- **Cambiar de modo claro/oscuro ya no genera una revisión.** El hash de `appearance.json`
+  sale de los campos portables (tema y snippets), así que el cambio automático de modo al
+  anochecer no se publica: se aplica en el dispositivo y no viaja.
+
+### Interno
+
+- Core vendorizado a la versión con `bytesParaHash`.
+
 # Changelog
 
 Todos los cambios relevantes del plugin, por corte de release.
