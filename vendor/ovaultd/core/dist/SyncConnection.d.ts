@@ -48,6 +48,8 @@ export interface SyncConnectionOptions {
     fetchImpl?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
     /** Versión del cliente que reporta el `hello` (el panel la muestra por device). */
     appVersion?: string;
+    /** Notas (`.md`) que el cliente ve en su vault. El server no puede derivarlo (path cifrado). */
+    notes?: number;
 }
 export declare class SyncConnection {
     private readonly opciones;

@@ -1,3 +1,10 @@
+## [0.3.2] — 2026-10-24
+
+### Added
+
+- El plugin reporta **cuántas notas** tiene el vault (`getMarkdownFiles()`), para que el
+  panel del server pueda mostrar Notas y Archivos por separado.
+
 ## [0.3.1] — 2026-10-24
 
 ### Fixed

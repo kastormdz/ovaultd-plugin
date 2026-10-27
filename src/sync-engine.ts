@@ -539,6 +539,8 @@ export class MotorDeSync {
       device: local.cuenta.deviceId,
       keys: subclavesDeHex(local.vault.subclaves),
       appVersion: `plugin ${this.versionPropia}`,
+      // El server no puede saber qué es una nota (path cifrado): lo cuenta el plugin.
+      notes: this.app.vault.getMarkdownFiles().length,
     });
     await conn.open({ since: 0 });
     return conn;
@@ -954,6 +956,8 @@ export class MotorDeSync {
       device: local.cuenta.deviceId,
       keys: this.keys,
       appVersion: `plugin ${this.versionPropia}`,
+      // El server no puede saber qué es una nota (path cifrado): lo cuenta el plugin.
+      notes: this.app.vault.getMarkdownFiles().length,
       // El aviso del server: hay revisiones nuevas. Es una señal, así que lo único que hace es
       // adelantar el ciclo — el pull con el `since` del checkpoint es el que trae los datos.
       alRecibirAviso: () => this.marcarSucio(AVISO_MS),

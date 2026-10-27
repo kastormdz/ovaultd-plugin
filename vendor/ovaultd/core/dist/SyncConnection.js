@@ -89,6 +89,7 @@ export class SyncConnection {
             device: this.opciones.device,
             since,
             ...(this.opciones.appVersion ? { app_version: this.opciones.appVersion } : {}),
+            ...(typeof this.opciones.notes === 'number' ? { notes: this.opciones.notes } : {}),
         });
         const helloOk = (await this.esperar(['hello_ok']));
         const challenge = b64Decode(helloOk.challenge);

@@ -6814,7 +6814,8 @@
         vault: this.opciones.vault,
         device: this.opciones.device,
         since,
-        ...this.opciones.appVersion ? { app_version: this.opciones.appVersion } : {}
+        ...this.opciones.appVersion ? { app_version: this.opciones.appVersion } : {},
+        ...typeof this.opciones.notes === "number" ? { notes: this.opciones.notes } : {}
       });
       const helloOk = await this.esperar(["hello_ok"]);
       const challenge = b64Decode(helloOk.challenge);
@@ -8176,6 +8177,7 @@
         device: Number(params.device),
         keys,
         appVersion: typeof params.appVersion === "string" ? params.appVersion : void 0,
+        notes: typeof params.notes === "number" ? params.notes : void 0,
         // El HTTP del cliente pasa por el PUENTE (mismo origen que la página): el cache del
         // preflight CORS del navegador es por URL y cada blob tiene la suya, así que un PUT
         // directo pagaba un OPTIONS de ~40 ms por blob. El puente lo reenvía con node.
