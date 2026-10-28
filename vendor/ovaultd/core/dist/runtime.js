@@ -5807,7 +5807,7 @@
   var CAMPOS_PORTABLES = ["cssTheme", "enabledCssSnippets"];
   var DECODIFICADOR = new TextDecoder();
   var CODIFICADOR = new TextEncoder();
-  var esApariencia = (path) => /(^|\/)appearance\.json$/.test(path);
+  var esApariencia = (path) => /(^|\/)\.[^/]+\/appearance\.json$/.test(path);
   var parsear = (texto) => {
     try {
       const v = JSON.parse(texto);
@@ -5817,7 +5817,8 @@
     }
   };
   function proyeccionDeApariencia(texto) {
-    const o = parsear(texto) ?? {};
+    const o = parsear(texto);
+    if (o === null) return texto;
     const p = {};
     for (const campo of CAMPOS_PORTABLES) {
       const v = o[campo];

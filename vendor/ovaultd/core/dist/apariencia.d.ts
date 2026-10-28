@@ -13,7 +13,13 @@
  *  2. `mergeDeApariencia` — merge POR CAMPO en el apply. No es el 3-vías de texto: con
  *     JSON por líneas cualquier reformateo es conflicto.
  */
-/** ¿El path es un `appearance.json` (del configDir que sea)? */
+/**
+ * ¿El path es el `appearance.json` de un configDir (`.obsidian` o uno custom)?
+ *
+ * El configDir de Obsidian SIEMPRE es un directorio oculto. Exigir el punto evita que un
+ * `appearance.json` suelto —un export, un fixture, una nota `.json`— se proyecte y colisione
+ * con el de la config: mismo hash = mismo blob en el CAS, y uno de los dos se perdía.
+ */
 export declare const esApariencia: (path: string) => boolean;
 /**
  * Proyección canónica: SOLO los campos portables, con los snippets ordenados. Es lo que

@@ -1,3 +1,19 @@
+## [0.3.3] — 2026-10-27
+
+### Fixed
+
+- **`appearance.json` de otro directorio ya no colisiona con el de la config.** El detector
+  aceptaba cualquier archivo con ese nombre: un `notas/appearance.json` (export, fixture,
+  nota `.json`) se proyectaba igual que el del configDir y compartía hash — o sea, mismo
+  blob en el CAS, y uno de los dos contenidos no se guardaba. Ahora exige el configDir
+  oculto (`.obsidian` o uno custom).
+- **Un `appearance.json` inválido se hashea crudo.** Antes todo JSON que no parseaba
+  proyectaba a `{}`: `{}`, un archivo truncado y basura compartían hash, así que corromper
+  el archivo no generaba revisión y el CAS servía otro contenido.
+
+Nada cambia en el uso normal: un cambio de modo claro/oscuro sigue sin generar revisión, y
+un cambio de tema o de snippets sigue viajando.
+
 ## [0.3.2] — 2026-10-24
 
 ### Added
